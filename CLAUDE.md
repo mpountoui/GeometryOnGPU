@@ -8,11 +8,13 @@ Geometry processing on the GPU, written in C/C++ and CUDA.
 
 ## Build, run, test
 
-TODO: fill in once the build system exists (CMake is the likely choice for C++/CUDA).
+CMake (>= 3.24). CUDA is optional: without a CUDA compiler the project builds CPU-only.
+The dev Mac (Apple Silicon) has no `nvcc`, so CUDA code can only be built and run on an NVIDIA machine.
 
 ```
-# configure:
-# build:
+cmake -S . -B build                  # configure (-DGEOM_ENABLE_CUDA=OFF to force CPU-only)
+cmake --build build                  # build
+./build/geometry_on_gpu              # run
 # test:
 # benchmark:
 ```
@@ -24,7 +26,10 @@ Link longer notes in `docs/` instead of inlining them.
 
 ## Conventions
 
-- Languages: C++ (standard: TODO, e.g. C++17) and CUDA (target architectures: TODO).
+- Languages: C++23 for host code, C++20 for CUDA (`nvcc` has no C++23, so keep C++23-only
+  features out of `.cu` files and the headers they include). `CMAKE_CUDA_ARCHITECTURES`
+  defaults to `native`; override with `-D`.
+- Code guarded by `GEOM_HAS_CUDA` is only compiled when CUDA is available; keep a CPU path.
 - Precision: TODO (`float` vs `double` in kernels).
 - Data layout: TODO (AoS vs SoA, row-major vs column-major, coordinate conventions).
 - Every CUDA API call and kernel launch is error-checked (use one shared macro or helper).
