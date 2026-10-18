@@ -18,7 +18,7 @@ cmake --build build                  # build
 ./build/geometry_on_gpu --svg [dir]  # write demo curve images (default: build/svg/)
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
-# benchmark:
+./build/bench_curve_point [N] [degree] [--svg]   # benchmark (Release build); results in docs/benchmarks.md
 ```
 
 ## Architecture

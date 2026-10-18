@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <filesystem>
@@ -146,7 +147,9 @@ namespace viz
 		{
 			svg.addPolyline(polygon, "#9a9a9a", 1.0, true);
 		}
-		svg.addPolyline(sampleCurve(curve, 200), color, 2.0, false);
+		// About 20 samples per control point (at least 200), so long curves stay smooth.
+		const int samples = std::max(200, 20 * static_cast<int>(curve.numControlPoints()));
+		svg.addPolyline(sampleCurve(curve, samples), color, 2.0, false);
 		if (withControlPolygon)
 		{
 			svg.addDots(polygon, "#d1242f", 3.5);

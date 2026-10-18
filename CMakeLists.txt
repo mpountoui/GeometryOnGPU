@@ -123,6 +123,14 @@ if(GEOM_HAS_CUDA)
 	target_link_libraries(geometry_on_gpu PRIVATE CUDA::cudart)
 endif()
 
+# ---- Benchmarks --------------------------------------------------------------------------
+# Programs that measure speed. They are not tests (CTest does not run them): build in Release
+# (the default here) and run them by hand, e.g.  ./build/bench_curve_point 1000000 3 --svg
+add_executable(bench_curve_point benchmarks/bench_curve_point.cpp)
+target_compile_features(bench_curve_point PRIVATE cxx_std_23)
+target_link_libraries(bench_curve_point PRIVATE geom viz)
+geom_enable_warnings(bench_curve_point)
+
 # ---- Tests -------------------------------------------------------------------------------
 # enable_testing() turns on CTest, CMake's test runner. add_test registers a program as a
 # test; it passes if the program exits with 0. Run all tests with:
