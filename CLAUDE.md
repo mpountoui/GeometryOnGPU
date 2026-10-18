@@ -26,8 +26,9 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   `std::floating_point T` so float/double can be compared before fixing the kernel precision.
 - `NurbsCurve<T>` (`src/geom/nurbs_curve.hpp`) is a host-side, immutable, validated owner of
   degree, knots and weighted control points. GPU code will get a separate non-owning view.
-- Algorithms are free functions on spans (`src/geom/basis.hpp`: A2.1 `findSpan`, A2.2
-  `basisFunctions`), with no allocation or exceptions so they can move into kernels.
+- Algorithms are free functions on spans, with no allocation or exceptions so they can move
+  into kernels: `basis.hpp` (A2.1 `findSpan`, A2.2 `basisFunctions`), `curve_point.hpp`
+  (A4.1 `curvePoint`). Each has a doc in `docs/algorithms/`.
 
 TODO: host/device data flow, once the first kernel exists. Longer notes go in `docs/`.
 
@@ -104,6 +105,9 @@ Record each with its reason, for example: "Kernel X assumes sorted input because
 - Knot vectors must be clamped (first/last knot repeated exactly p+1 times) and interior
   multiplicity <= p, because the book's algorithms assume this (p.117). Periodic curves would
   need a separate type.
+- Degree is capped at `kMaxDegree` (9, in `basis.hpp`) and `NurbsCurve` rejects higher degrees:
+  evaluation keeps the p+1 basis values in a fixed-size local array (registers on the GPU).
+  Raise the constant if a higher degree is ever needed.
 
 ## Where things live
 

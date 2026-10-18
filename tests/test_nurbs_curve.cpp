@@ -153,8 +153,31 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// Knots of a Bezier curve of the given degree: degree + 1 zeros, then degree + 1 ones.
+	Values bezierKnots(int degree)
+	{
+		const auto count = static_cast<std::size_t>(degree) + 1;
+		Values knots(count, 0.0);
+		knots.insert(knots.end(), count, 1.0);
+		return knots;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// kMaxDegree is accepted, one more is rejected.
+	void testMaximumDegree()
+	{
+		const int maxDegree = geom::kMaxDegree;
+		const auto count = static_cast<std::size_t>(maxDegree) + 1;
+		CHECK(!isRejected(maxDegree, bezierKnots(maxDegree), Points(count), Values(count, 1.0)));
+		CHECK(isRejected(maxDegree + 1, bezierKnots(maxDegree + 1), Points(count + 1), Values(count + 1, 1.0)));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	void runAllTests()
 	{
+		testMaximumDegree();
 		testFigure41Sizes();
 		testFigure41Points();
 		testIndexOutOfRange();

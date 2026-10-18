@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "geom/basis.hpp"
 #include "geom/point.hpp"
 
 namespace geom
@@ -61,6 +62,8 @@ namespace geom
 		// False when all weights are equal: the curve is then a plain B-spline curve (P4.7, p.118).
 		bool isRational() const noexcept;
 		
+		Point3<T> u_to_xyz(T u) const;
+
 	private:
 		[[noreturn]] static void fail(const std::string& message);
 		
@@ -68,6 +71,7 @@ namespace geom
 		static std::vector<Point4<T>> makeWeightedPoints(std::span<const Point3<T>> points, std::span<const T> weights);
 		
 		void validate() const;
+		void checkDegree() const;
 		void checkCounts() const;
 		void checkKnotValues() const;
 		void checkClamped() const;
@@ -151,8 +155,7 @@ namespace geom
 	template <std::floating_point T>
 	Point3<T> NurbsCurve<T>::controlPoint(std::size_t i) const
 	{
-		const Point4<T>& pw = m_controlPointsW.at(i);
-		return {pw.x / pw.w, pw.y / pw.w, pw.z / pw.w};
+		return Get3DPoint(m_controlPointsW.at(i));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -216,6 +219,7 @@ namespace geom
 	template <std::floating_point T>
 	void NurbsCurve<T>::validate() const
 	{
+		checkDegree();
 		checkCounts();
 		checkKnotValues();
 		checkClamped();
@@ -226,12 +230,23 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	void NurbsCurve<T>::checkCounts() const
+	void NurbsCurve<T>::checkDegree() const
 	{
 		if (m_degree < 1)
 		{
 			fail("degree must be at least 1");
 		}
+		if (m_degree > kMaxDegree)
+		{
+			fail("degree must be at most " + std::to_string(kMaxDegree) + " (kMaxDegree in basis.hpp)");
+		}
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	void NurbsCurve<T>::checkCounts() const
+	{
 		const auto p = static_cast<std::size_t>(m_degree);
 		const std::size_t numPoints = m_controlPointsW.size();
 		if (numPoints < p + 1)
@@ -317,5 +332,13 @@ namespace geom
 				fail("an interior knot is repeated more than degree times");
 			}
 		}
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	Point3<T> NurbsCurve<T>::u_to_xyz(T u) const
+	{
+		return curvePoint(*this, u);
 	}
 }  // namespace geom

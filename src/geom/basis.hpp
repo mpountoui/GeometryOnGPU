@@ -19,6 +19,10 @@ namespace geom
 	//
 	// No allocation and no exceptions: this code is meant to run inside GPU kernels later.
 	
+	// Highest supported degree. Evaluation keeps the p + 1 basis values in a fixed-size local
+	// array (registers on the GPU), so the degree needs an upper bound. NurbsCurve enforces it.
+	inline constexpr int kMaxDegree = 9;
+	
 	// A2.1 FindSpan (p.68): the span index i with u in [u_i, u_{i+1}). For u == u_m it returns n,
 	// the last non-empty span. Precondition: u in [u_p, u_m]; outside it, u is clamped to the
 	// first or last span.
