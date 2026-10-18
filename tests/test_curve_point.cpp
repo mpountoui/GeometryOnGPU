@@ -3,8 +3,8 @@
 
 #include "check.hpp"
 #include "geom/curve_point.hpp"
+#include "geom/nurbs_curve.hpp"
 
-using geom::curvePoint;
 using geom::NurbsCurve;
 using geom::Point3;
 
@@ -29,7 +29,7 @@ namespace
 	{
 		const Points points{{0, 0, 0}, {1, 1, 0}, {3, 2, 0}, {4, 1, 0}, {5, -1, 0}};
 		const NurbsCurve<double> curve(2, {0, 0, 0, 1, 2, 3, 3, 3}, points, Values{1, 4, 1, 1, 1});
-		CHECK(nearPoint(curvePoint(curve, 1.0), {7.0 / 5, 6.0 / 5, 0}));
+		CHECK(nearPoint(curve(1.0), {7.0 / 5, 6.0 / 5, 0}));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -39,8 +39,8 @@ namespace
 	{
 		const Points points{{0, 0, 0}, {1, 2, 0}, {3, 3, 0}, {4, 0, 0}, {6, 0, 0}, {7, 2, 0}, {9, 2, 0}};
 		const NurbsCurve<double> curve(3, {0, 0, 0, 0, 0.25, 0.5, 0.75, 1, 1, 1, 1}, points, Values{1, 1, 1, 3, 1, 1, 1});
-		CHECK(nearPoint(curvePoint(curve, 0.0), points.front()));
-		CHECK(nearPoint(curvePoint(curve, 1.0), points.back()));
+		CHECK(nearPoint(curve(0.0), points.front()));
+		CHECK(nearPoint(curve(1.0), points.back()));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -50,7 +50,7 @@ namespace
 	{
 		const Points points{{0, 0, 0}, {1, 1, 0}, {2, 0, 0}};
 		const NurbsCurve<double> curve(2, {0, 0, 0, 1, 1, 1}, points);
-		CHECK(nearPoint(curvePoint(curve, 0.5), {1, 0.5, 0}));
+		CHECK(nearPoint(curve(0.5), {1, 0.5, 0}));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -63,7 +63,7 @@ namespace
 		const NurbsCurve<double> curve(2, {0, 0, 0, 1, 1, 1}, points, weights);
 		for (int k = 0; k <= 100; ++k)
 		{
-			const Point3<double> c = curvePoint(curve, k / 100.0);
+			const Point3<double> c = curve(k / 100.0);
 			CHECK(test::near(c.x * c.x + c.y * c.y, 1.0, kTol));
 		}
 	}
@@ -79,7 +79,7 @@ namespace
 		const NurbsCurve<double> b(2, knots, points, Values{2.5, 10, 2.5, 2.5, 2.5});
 		for (double u : {0.0, 0.7, 1.5, 2.2, 3.0})
 		{
-			CHECK(nearPoint(curvePoint(a, u), curvePoint(b, u)));
+			CHECK(nearPoint(a(u), b(u)));
 		}
 	}
 	
@@ -89,14 +89,28 @@ namespace
 	{
 		const std::vector<Point3<float>> points{{0, 0, 0}, {1, 1, 0}, {2, 0, 0}};
 		const NurbsCurve<float> curve(2, {0, 0, 0, 1, 1, 1}, points);
-		const Point3<float> c = curvePoint(curve, 0.5f);
+		const Point3<float> c = curve(0.5f);
 		CHECK(test::near(c.x, 1.0f, 1e-6f) && test::near(c.y, 0.5f, 1e-6f));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The low-level function, called with the curve's raw data, gives the same point as curve(u).
+	void testLowLevelMatchesOperator()
+	{
+		const Points points{{0, 0, 0}, {1, 1, 0}, {3, 2, 0}, {4, 1, 0}, {5, -1, 0}};
+		const NurbsCurve<double> curve(2, {0, 0, 0, 1, 2, 3, 3, 3}, points, Values{1, 4, 1, 1, 1});
+		for (double u : {0.0, 0.5, 1.0, 2.5, 3.0})
+		{
+			CHECK(nearPoint(geom::curvePoint(curve.degree(), curve.knots(), curve.weightedControlPoints(), u), curve(u)));
+		}
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	void runAllTests()
 	{
+		testLowLevelMatchesOperator();
 		testEx41();
 		testEndPoints();
 		testNonRationalBezier();

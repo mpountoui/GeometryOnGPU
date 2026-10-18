@@ -92,6 +92,15 @@ target_include_directories(geom INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # .cu files will include these headers and nvcc has no C++23, so the headers need only C++20.
 target_compile_features(geom INTERFACE cxx_std_20)
 
+# ---- The visualization library -----------------------------------------------------------
+# Code that is not a template goes in .cpp files, compiled once into a library. A STATIC
+# library is compiled code that gets copied into each executable that links it.
+# PUBLIC means whatever links "viz" also gets what viz links (geom and its include directory).
+add_library(viz STATIC src/viz/svg_document.cpp)
+target_compile_features(viz PRIVATE cxx_std_23)
+target_link_libraries(viz PUBLIC geom)
+geom_enable_warnings(viz)
+
 # ---- The program -------------------------------------------------------------------------
 # A "target" is something to build. add_executable(<name> <sources...>) creates an
 # executable called geometry_on_gpu from the listed source files. New .cpp/.cu files
@@ -101,7 +110,7 @@ add_executable(geometry_on_gpu src/main.cpp)
 # Requires C++23 for this target (the global setting above already asks for it).
 # PRIVATE means the requirement applies to this target only, not to anything that links to it.
 target_compile_features(geometry_on_gpu PRIVATE cxx_std_23)
-target_link_libraries(geometry_on_gpu PRIVATE geom)
+target_link_libraries(geometry_on_gpu PRIVATE geom viz)
 geom_enable_warnings(geometry_on_gpu)
 
 if(GEOM_HAS_CUDA)
@@ -120,11 +129,13 @@ endif()
 #   ctest --test-dir build --output-on-failure
 enable_testing()
 
-# geom_add_test(<name>) builds tests/test_<name>.cpp into test_<name> and registers it with CTest.
+# geom_add_test(<name> [libraries...]) builds tests/test_<name>.cpp into test_<name>, links it
+# to geom plus any extra libraries given (CMake collects extra arguments in ARGN), and
+# registers it with CTest.
 function(geom_add_test name)
 	add_executable(test_${name} tests/test_${name}.cpp)
 	target_compile_features(test_${name} PRIVATE cxx_std_23)
-	target_link_libraries(test_${name} PRIVATE geom)
+	target_link_libraries(test_${name} PRIVATE geom ${ARGN})
 	geom_enable_warnings(test_${name})
 	add_test(NAME ${name} COMMAND test_${name})
 endfunction()
@@ -132,4 +143,4 @@ endfunction()
 geom_add_test(nurbs_curve)
 geom_add_test(basis)
 geom_add_test(curve_point)
-geom_add_test(svg)
+geom_add_test(svg viz)

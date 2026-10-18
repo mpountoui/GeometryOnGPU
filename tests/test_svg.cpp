@@ -37,7 +37,7 @@ namespace
 	{
 		const std::size_t start = svg.find("points=\"") + 8;
 		std::istringstream in(svg.substr(start, svg.find('"', start) - start));
-		Pixels pixels;
+		Pixels pixels{};
 		double x = 0;
 		double y = 0;
 		char comma = 0;
@@ -123,7 +123,7 @@ namespace
 		const std::filesystem::path path = std::filesystem::temp_directory_path() / "geometry_on_gpu_test.svg";
 		SvgDocument(200, 100).save(path);
 		std::ifstream file(path);
-		std::string firstLine;
+		std::string firstLine{};
 		std::getline(file, firstLine);
 		CHECK(firstLine.starts_with("<svg"));
 		std::filesystem::remove(path);

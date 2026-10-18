@@ -1,6 +1,6 @@
 # Point on a NURBS curve (A4.1 CurvePoint)
 
-Code: `src/geom/curve_point.hpp`. Tests: `tests/test_curve_point.cpp`.
+Code: `src/geom/curve_point.hpp` and `NurbsCurve::operator()`. Tests: `tests/test_curve_point.cpp`.
 
 ## Book reference
 
@@ -16,13 +16,15 @@ Code: `src/geom/curve_point.hpp`. Tests: `tests/test_curve_point.cpp`.
 
 ```cpp
 Point3<T> curvePoint(int degree, std::span<const T> knots, std::span<const Point4<T>> weightedPoints, T u);
-Point3<T> curvePoint(const NurbsCurve<T>& curve, T u);   // convenience
+Point3<T> NurbsCurve<T>::operator()(T u) const;   // curve(u), calls curvePoint with the curve's data
 ```
 
 - The basis values live in a local `std::array<T, kMaxDegree + 1>`, so evaluation allocates
   nothing (on the GPU they would sit in registers). `kMaxDegree` is defined in `basis.hpp`, and
   `NurbsCurve` rejects higher degrees, so a valid curve can always be evaluated.
-- `project(Pw)` (in `point.hpp`) is the book's `C = Cw / w`; `NurbsCurve::controlPoint` uses it too.
+- `Get3DPoint(Pw)` (in `point.hpp`) is the book's projection `C = Cw / w`; `NurbsCurve::controlPoint` uses it too.
+- `curve_point.hpp` does not depend on `NurbsCurve`; `nurbs_curve.hpp` includes it. That way
+  `curve(u)` works with only `nurbs_curve.hpp` included, and kernels can call `curvePoint` on raw data.
 - Same preconditions as `findSpan`: `u` in `[u_p, u_m]` (asserted in debug, clamped in release).
 
 ## Tests

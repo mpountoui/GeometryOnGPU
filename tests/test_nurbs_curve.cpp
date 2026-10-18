@@ -153,6 +153,17 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// curve(u) works with only nurbs_curve.hpp included (this file includes nothing else from geom).
+	void testEvaluationOperator()
+	{
+		const std::vector<Point3<double>> points{{0, 0, 0}, {1, 1, 0}, {2, 0, 0}};
+		const NurbsCurve<double> curve(2, {0, 0, 0, 1, 1, 1}, points);
+		CHECK(curve(0.5) == (Point3<double>{1, 0.5, 0}));
+		CHECK(curve(0.0) == points.front());
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	// Knots of a Bezier curve of the given degree: degree + 1 zeros, then degree + 1 ones.
 	Values bezierKnots(int degree)
 	{
@@ -177,6 +188,7 @@ namespace
 	
 	void runAllTests()
 	{
+		testEvaluationOperator();
 		testMaximumDegree();
 		testFigure41Sizes();
 		testFigure41Points();

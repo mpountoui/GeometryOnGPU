@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "geom/basis.hpp"
+#include "geom/curve_point.hpp"
 #include "geom/point.hpp"
 
 namespace geom
@@ -62,14 +63,10 @@ namespace geom
 		// False when all weights are equal: the curve is then a plain B-spline curve (P4.7, p.118).
 		bool isRational() const noexcept;
 		
-		Point3<T> u_to_xyz(T u) const;
-
+		// The point C(u) on the curve (A4.1). Precondition: u in domain().
+		Point3<T> operator()(T u) const;
+		
 	private:
-		[[noreturn]] static void fail(const std::string& message);
-		
-		// Builds Pw_i = (w_i x_i, w_i y_i, w_i z_i, w_i). Book assumption, p.118: w_i > 0.
-		static std::vector<Point4<T>> makeWeightedPoints(std::span<const Point3<T>> points, std::span<const T> weights);
-		
 		void validate() const;
 		void checkDegree() const;
 		void checkCounts() const;
@@ -79,9 +76,15 @@ namespace geom
 		void checkInteriorMultiplicities() const;
 		
 	private:
-		int m_degree;
-		std::vector<T> m_knots;
-		std::vector<Point4<T>> m_controlPointsW;
+		int m_degree{};
+		std::vector<T> m_knots{};
+		std::vector<Point4<T>> m_controlPointsW{};
+		
+	private:
+		[[noreturn]] static void fail(const std::string& message);
+		
+		// Builds Pw_i = (w_i x_i, w_i y_i, w_i z_i, w_i). Book assumption, p.118: w_i > 0.
+		static std::vector<Point4<T>> makeWeightedPoints(std::span<const Point3<T>> points, std::span<const T> weights);
 	};
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -186,32 +189,9 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	void NurbsCurve<T>::fail(const std::string& message)
+	Point3<T> NurbsCurve<T>::operator()(T u) const
 	{
-		throw std::invalid_argument("NurbsCurve: " + message);
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	template <std::floating_point T>
-	std::vector<Point4<T>> NurbsCurve<T>::makeWeightedPoints(std::span<const Point3<T>> points, std::span<const T> weights)
-	{
-		if (weights.size() != points.size())
-		{
-			fail(std::to_string(points.size()) + " control points but " + std::to_string(weights.size()) + " weights");
-		}
-		std::vector<Point4<T>> result;
-		result.reserve(points.size());
-		for (std::size_t i = 0; i < points.size(); ++i)
-		{
-			const T w = weights[i];
-			if (!(w > T{0}) || !std::isfinite(w))
-			{
-				fail("weights must be positive and finite");
-			}
-			result.push_back({w * points[i].x, w * points[i].y, w * points[i].z, w});
-		}
-		return result;
+		return curvePoint(m_degree, m_knots, m_controlPointsW, u);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -337,8 +317,31 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	Point3<T> NurbsCurve<T>::u_to_xyz(T u) const
+	void NurbsCurve<T>::fail(const std::string& message)
 	{
-		return curvePoint(*this, u);
+		throw std::invalid_argument("NurbsCurve: " + message);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	std::vector<Point4<T>> NurbsCurve<T>::makeWeightedPoints(std::span<const Point3<T>> points, std::span<const T> weights)
+	{
+		if (weights.size() != points.size())
+		{
+			fail(std::to_string(points.size()) + " control points but " + std::to_string(weights.size()) + " weights");
+		}
+		std::vector<Point4<T>> result{};
+		result.reserve(points.size());
+		for (std::size_t i = 0; i < points.size(); ++i)
+		{
+			const T w = weights[i];
+			if (!(w > T{0}) || !std::isfinite(w))
+			{
+				fail("weights must be positive and finite");
+			}
+			result.push_back({w * points[i].x, w * points[i].y, w * points[i].z, w});
+		}
+		return result;
 	}
 }  // namespace geom

@@ -8,7 +8,6 @@
 #include <type_traits>
 
 #include "geom/basis.hpp"
-#include "geom/nurbs_curve.hpp"
 #include "geom/point.hpp"
 
 namespace geom
@@ -17,15 +16,12 @@ namespace geom
 	// docs/algorithms/curve-point.md.
 	//
 	// No allocation and no exceptions: the basis values live in a local array of kMaxDegree + 1.
+	// It does not depend on NurbsCurve (which includes this header): use curve(u) for a curve.
 	
 	// C(u) from the degree, the knots and the weighted control points Pw.
 	// Preconditions: degree <= kMaxDegree, and u in the domain (see findSpan).
 	template <std::floating_point T>
 	Point3<T> curvePoint(int degree, std::type_identity_t<std::span<const T>> knots, std::type_identity_t<std::span<const Point4<T>>> weightedPoints, T u);
-	
-	// C(u) for a NurbsCurve.
-	template <std::floating_point T>
-	Point3<T> curvePoint(const NurbsCurve<T>& curve, T u);
 	
 	namespace detail
 	{
@@ -47,14 +43,6 @@ namespace geom
 		const std::span<T> basis(storage.data(), p + 1);
 		basisFunctions(span, u, degree, knots, basis);
 		return Get3DPoint(detail::weightedSum<T>(basis, weightedPoints, span - p));
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	template <std::floating_point T>
-	Point3<T> curvePoint(const NurbsCurve<T>& curve, T u)
-	{
-		return curvePoint(curve.degree(), curve.knots(), curve.weightedControlPoints(), u);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

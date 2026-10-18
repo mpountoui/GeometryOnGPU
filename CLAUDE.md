@@ -29,9 +29,12 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   degree, knots and weighted control points. GPU code will get a separate non-owning view.
 - Algorithms are free functions on spans, with no allocation or exceptions so they can move
   into kernels: `basis.hpp` (A2.1 `findSpan`, A2.2 `basisFunctions`), `curve_point.hpp`
-  (A4.1 `curvePoint`). Each has a doc in `docs/algorithms/`.
-- `src/viz/`: host-only visualization. `svg_document.hpp` draws curves, control polygons and
-  points as SVG (xy projection, y up). Never include it from `.cu` files.
+  (A4.1 `curvePoint`, on raw data). Each has a doc in `docs/algorithms/`.
+- `curve(u)` (`NurbsCurve::operator()`) evaluates a point; it calls `curvePoint` with the curve's data.
+  So `nurbs_curve.hpp` includes `curve_point.hpp`, never the other way round.
+- `src/viz/`: host-only visualization, the `viz` static library. `SvgDocument`
+  (`svg_document.hpp/.cpp`) draws curves, control polygons and points as SVG (xy projection,
+  y up). Never include it from `.cu` files.
 
 TODO: host/device data flow, once the first kernel exists. Longer notes go in `docs/`.
 
@@ -40,6 +43,9 @@ TODO: host/device data flow, once the first kernel exists. Longer notes go in `d
 - Languages: C++23 for host code, C++20 for CUDA (`nvcc` has no C++23, so keep C++23-only
   features out of `.cu` files and the headers they include). `CMAKE_CUDA_ARCHITECTURES`
   defaults to `native`; override with `-D`.
+- Templates stay in headers (each `T` needs the definition, and so does device code). Non-template
+  code goes in a `.cpp` file compiled into a static library (e.g. `viz`), so headers have
+  declarations only and no `inline` is needed.
 - Code guarded by `GEOM_HAS_CUDA` is only compiled when CUDA is available; keep a CPU path.
 - Precision: TODO (`float` vs `double` in kernels).
 - Data layout: TODO (AoS vs SoA, row-major vs column-major, coordinate conventions).
@@ -58,6 +64,7 @@ Follow these when writing or changing code:
    2. `public:` methods
    3. `private:` methods
    4. `private:` members, named with an `m_` prefix (`m_degree`)
+   5. `private:` static methods, always last
 
    All definitions come after the class body (for templates, below the class in the same
    header), in the same order as the declarations. A comment line of the form
@@ -73,6 +80,9 @@ Follow these when writing or changing code:
    are in (empty only at depth 0), so keep `trim_trailing_whitespace` off for code.
 5. **Function signatures stay on one line**, declarations and definitions alike, however long.
    Do not wrap them.
+6. **Always initialize variables**, locals and the members declared in classes and structs
+   alike. Use `{}` for the default value (`int m_degree{};`, `std::vector<T> m_knots{};`,
+   `T x{};`), or `= value` / `{value}` when there is a meaningful starting value.
 
 ```cpp
 namespace geom
@@ -90,7 +100,10 @@ namespace geom
 
 	private:
 		// members
-		int m_degree;
+		int m_degree{};
+		
+	private:
+		// static methods (declarations)
 	};
 
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
