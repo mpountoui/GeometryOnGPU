@@ -10,7 +10,7 @@ namespace geom
 	{
 		T x{}, y{}, z{};
 		
-		friend bool operator==(const Point3&, const Point3&) = default;
+		friend bool operator==(Point3 const&, Point3 const&) = default;
 	};
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -23,14 +23,14 @@ namespace geom
 	{
 		T x{}, y{}, z{}, w{};
 		
-		friend bool operator==(const Point4&, const Point4&) = default;
+		friend bool operator==(Point4 const&, Point4 const&) = default;
 	};
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	// Projection C = Cw / w (the book's notation, p.124): the Euclidean point of a weighted point.
 	template <std::floating_point T>
-	Point3<T> Get3DPoint(const Point4<T>& pw)
+	Point3<T> Get3DPoint(Point4<T> const& pw)
 	{
 		return {pw.x / pw.w, pw.y / pw.w, pw.z / pw.w};
 	}

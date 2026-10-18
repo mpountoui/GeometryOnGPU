@@ -53,8 +53,8 @@ namespace
 	template <std::floating_point T>
 	std::vector<T> uniformClampedKnots(int degree, std::size_t numPoints)
 	{
-		const auto p = static_cast<std::size_t>(degree);
-		const std::size_t numInterior = numPoints - p - 1;
+		auto const p = static_cast<std::size_t>(degree);
+		std::size_t const numInterior = numPoints - p - 1;
 		std::vector<T> knots(p + 1, T{0});
 		for (std::size_t k = 1; k <= numInterior; ++k)
 		{
@@ -75,8 +75,8 @@ namespace
 		std::vector<T> weights{};
 		for (std::size_t i = 0; i < kNumControlPoints; ++i)
 		{
-			const double t = static_cast<double>(i);
-			const double radius = 1.0 + 0.08 * t;
+			double const t = static_cast<double>(i);
+			double const radius = 1.0 + 0.08 * t;
 			points.push_back({static_cast<T>(radius * std::cos(0.4 * t)), static_cast<T>(radius * std::sin(0.4 * t)), static_cast<T>(0.05 * t)});
 			weights.push_back(static_cast<T>(1.0 + 0.5 * std::sin(0.7 * t)));
 		}
@@ -87,9 +87,9 @@ namespace
 	
 	// N parameters evenly spaced over [a, b]; the last one is exactly b.
 	template <std::floating_point T>
-	std::vector<T> evenlySpacedParameters(const geom::NurbsCurve<T>& curve, std::size_t count)
+	std::vector<T> evenlySpacedParameters(geom::NurbsCurve<T> const& curve, std::size_t count)
 	{
-		const auto [a, b] = curve.domain();
+		auto const [a, b] = curve.domain();
 		std::vector<T> params(count, b);
 		for (std::size_t k = 0; k + 1 < count; ++k)
 		{
@@ -102,24 +102,24 @@ namespace
 	
 	// The timed loop: out[k] = C(params[k]). Returns the elapsed time in seconds.
 	template <std::floating_point T>
-	double evaluateAll(const geom::NurbsCurve<T>& curve, std::span<const T> params, std::span<geom::Point3<T>> out)
+	double evaluateAll(geom::NurbsCurve<T> const& curve, std::span<T const> params, std::span<geom::Point3<T>> out)
 	{
-		const Clock::time_point start = Clock::now();
+		Clock::time_point const start = Clock::now();
 		for (std::size_t k = 0; k < params.size(); ++k)
 		{
 			out[k] = curve(params[k]);
 		}
-		const Clock::time_point stop = Clock::now();
+		Clock::time_point const stop = Clock::now();
 		return std::chrono::duration<double>(stop - start).count();
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	double checksum(std::span<const geom::Point3<T>> points)
+	double checksum(std::span<geom::Point3<T> const> points)
 	{
 		double sum = 0.0;
-		for (const geom::Point3<T>& p : points)
+		for (geom::Point3<T> const& p : points)
 		{
 			sum += static_cast<double>(p.x) + static_cast<double>(p.y) + static_cast<double>(p.z);
 		}
@@ -132,8 +132,8 @@ namespace
 	template <std::floating_point T>
 	Timing timeEvaluation(int degree, std::size_t count)
 	{
-		const geom::NurbsCurve<T> curve = makeBenchmarkCurve<T>(degree);
-		const std::vector<T> params = evenlySpacedParameters(curve, count);
+		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree);
+		std::vector<T> const params = evenlySpacedParameters(curve, count);
 		std::vector<geom::Point3<T>> out(count);
 		evaluateAll<T>(curve, params, out);
 		std::vector<double> seconds{};
@@ -147,11 +147,11 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void printRow(std::string_view type, const Timing& timing, std::size_t count)
+	void printRow(std::string_view type, Timing const& timing, std::size_t count)
 	{
-		const double n = static_cast<double>(count);
-		const double nsPerPoint = timing.bestSeconds * 1e9 / n;
-		const double millionPerSecond = n / timing.bestSeconds / 1e6;
+		double const n = static_cast<double>(count);
+		double const nsPerPoint = timing.bestSeconds * 1e9 / n;
+		double const millionPerSecond = n / timing.bestSeconds / 1e6;
 		std::println("{:<8} {:>10.3f} {:>11.3f} {:>13.2f} {:>11.1f}   {:.6e}", type, timing.bestSeconds * 1e3, timing.medianSeconds * 1e3, nsPerPoint, millionPerSecond, timing.checksum);
 	}
 	
@@ -160,9 +160,9 @@ namespace
 	void printHeader(std::size_t count, int degree)
 	{
 #ifdef NDEBUG
-		const std::string_view build = "Release";
+		std::string_view const build = "Release";
 #else
-		const std::string_view build = "Debug (asserts on): timings are NOT representative";
+		std::string_view const build = "Debug (asserts on): timings are NOT representative";
 #endif
 		std::println("NURBS curve point evaluation, CPU, 1 thread ({} build)", build);
 		std::println("curve: degree {}, {} control points, rational 3D spiral; N = {} points; best and median of {} runs", degree, kNumControlPoints, count, kRuns);
@@ -172,11 +172,11 @@ namespace
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	// Saves the benchmark curve (double) with its control polygon as an SVG next to the executable.
-	void writeCurveSvg(const char* executable, int degree)
+	void writeCurveSvg(char const* executable, int degree)
 	{
-		const std::filesystem::path directory = std::filesystem::path(executable).parent_path() / "svg";
+		std::filesystem::path const directory = std::filesystem::path(executable).parent_path() / "svg";
 		std::filesystem::create_directories(directory);
-		const std::filesystem::path path = directory / "benchmark_curve.svg";
+		std::filesystem::path const path = directory / "benchmark_curve.svg";
 		viz::SvgDocument svg(800, 800);
 		viz::addNurbsCurve(svg, makeBenchmarkCurve<double>(degree), "#1f6feb", true);
 		svg.save(path);
@@ -189,7 +189,7 @@ namespace
 	std::size_t parseNumber(std::string_view text)
 	{
 		std::size_t value = 0;
-		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+		auto const [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
 		if (error != std::errc{} || end != text.data() + text.size())
 		{
 			return 0;
@@ -206,7 +206,7 @@ namespace
 		std::vector<std::string_view> numbers{};
 		for (int i = 1; i < argc; ++i)
 		{
-			const std::string_view arg = argv[i];
+			std::string_view const arg = argv[i];
 			if (arg == "--svg")
 			{
 				options.writeSvg = true;
@@ -227,13 +227,13 @@ namespace
 
 int main(int argc, char* argv[])
 {
-	const Options options = parseOptions(argc, argv);
+	Options const options = parseOptions(argc, argv);
 	if (!options.valid)
 	{
 		std::println(stderr, "usage: bench_curve_point [N >= 2] [1 <= degree <= {}] [--svg]", geom::kMaxDegree);
 		return 1;
 	}
-	const int degree = static_cast<int>(options.degree);
+	int const degree = static_cast<int>(options.degree);
 	if (options.writeSvg)
 	{
 		writeCurveSvg(argv[0], degree);

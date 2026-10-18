@@ -15,8 +15,8 @@ Code: `src/geom/basis.hpp`. Tests: `tests/test_basis.cpp`.
 ## Our version
 
 ```cpp
-std::size_t findSpan(int degree, std::span<const T> knots, T u);
-void basisFunctions(std::size_t span, T u, int degree, std::span<const T> knots, std::span<T> values);
+std::size_t findSpan(int degree, std::span<T const> knots, T u);
+void basisFunctions(std::size_t span, T u, int degree, std::span<T const> knots, std::span<T> values);
 ```
 
 - `n` is derived from the knots: `n = knots.size() - p - 2` (since `m = n + p + 1`).

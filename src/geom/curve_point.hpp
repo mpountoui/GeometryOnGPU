@@ -21,26 +21,26 @@ namespace geom
 	// C(u) from the degree, the knots and the weighted control points Pw.
 	// Preconditions: degree <= kMaxDegree, and u in the domain (see findSpan).
 	template <std::floating_point T>
-	Point3<T> curvePoint(int degree, std::type_identity_t<std::span<const T>> knots, std::type_identity_t<std::span<const Point4<T>>> weightedPoints, T u);
+	Point3<T> curvePoint(int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<Point4<T> const>> weightedPoints, T u);
 	
 	namespace detail
 	{
 		// Cw = sum_j basis[j] * Pw[first + j], the 4D point before the projection C = Cw / w.
 		template <std::floating_point T>
-		Point4<T> weightedSum(std::span<const T> basis, std::span<const Point4<T>> weightedPoints, std::size_t first);
+		Point4<T> weightedSum(std::span<T const> basis, std::span<Point4<T> const> weightedPoints, std::size_t first);
 	}  // namespace detail
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	Point3<T> curvePoint(int degree, std::type_identity_t<std::span<const T>> knots, std::type_identity_t<std::span<const Point4<T>>> weightedPoints, T u)
+	Point3<T> curvePoint(int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<Point4<T> const>> weightedPoints, T u)
 	{
 		assert(degree >= 1 && degree <= kMaxDegree);
 		assert(weightedPoints.size() + static_cast<std::size_t>(degree) + 1 == knots.size());
-		const auto p = static_cast<std::size_t>(degree);
-		const std::size_t span = findSpan(degree, knots, u);
+		auto const p = static_cast<std::size_t>(degree);
+		std::size_t const span = findSpan(degree, knots, u);
 		std::array<T, kMaxDegree + 1> storage{};
-		const std::span<T> basis(storage.data(), p + 1);
+		std::span<T> const basis(storage.data(), p + 1);
 		basisFunctions(span, u, degree, knots, basis);
 		return Get3DPoint(detail::weightedSum<T>(basis, weightedPoints, span - p));
 	}
@@ -48,12 +48,12 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	Point4<T> detail::weightedSum(std::span<const T> basis, std::span<const Point4<T>> weightedPoints, std::size_t first)
+	Point4<T> detail::weightedSum(std::span<T const> basis, std::span<Point4<T> const> weightedPoints, std::size_t first)
 	{
 		Point4<T> sum{};
 		for (std::size_t j = 0; j < basis.size(); ++j)
 		{
-			const Point4<T>& pw = weightedPoints[first + j];
+			Point4<T> const& pw = weightedPoints[first + j];
 			sum.x += basis[j] * pw.x;
 			sum.y += basis[j] * pw.y;
 			sum.z += basis[j] * pw.z;

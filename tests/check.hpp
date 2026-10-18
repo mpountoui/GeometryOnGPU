@@ -11,7 +11,7 @@ namespace test
 	inline int failures = 0;
 	
 	// Exit code for main(): 0 if every CHECK passed.
-	inline int report(const char* suiteName);
+	inline int report(char const* suiteName);
 	
 	// |a - b| <= tolerance.
 	template <typename T>
@@ -19,7 +19,7 @@ namespace test
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	inline int report(const char* suiteName)
+	inline int report(char const* suiteName)
 	{
 		if (failures > 0)
 		{

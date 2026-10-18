@@ -22,7 +22,7 @@ namespace viz
 			double maxY{};
 		};
 		
-		Box boundingBox(const std::vector<SvgShape>& shapes);
+		Box boundingBox(std::vector<SvgShape> const& shapes);
 	}  // namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -55,12 +55,12 @@ namespace viz
 	
 	std::string SvgDocument::toString() const
 	{
-		const Viewport viewport = fitViewport();
+		Viewport const viewport = fitViewport();
 		std::ostringstream out{};
 		out << std::fixed << std::setprecision(2);
 		out << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << m_width << "\" height=\"" << m_height << "\" viewBox=\"0 0 " << m_width << ' ' << m_height << "\">\n";
 		out << "<rect width=\"100%\" height=\"100%\" fill=\"white\"/>\n";
-		for (const SvgShape& shape : m_shapes)
+		for (SvgShape const& shape : m_shapes)
 		{
 			writeShape(out, shape, viewport);
 		}
@@ -70,7 +70,7 @@ namespace viz
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void SvgDocument::save(const std::filesystem::path& path) const
+	void SvgDocument::save(std::filesystem::path const& path) const
 	{
 		std::ofstream file(path);
 		if (!file)
@@ -85,28 +85,28 @@ namespace viz
 	// Uniform scale so the bounding box fits inside the margins, centred in the image.
 	SvgDocument::Viewport SvgDocument::fitViewport() const
 	{
-		const Box box = boundingBox(m_shapes);
-		const double spanX = std::max(box.maxX - box.minX, 1e-12);
-		const double spanY = std::max(box.maxY - box.minY, 1e-12);
-		const double scale = std::min((m_width - 2 * kMargin) / spanX, (m_height - 2 * kMargin) / spanY);
-		const double offsetX = (m_width - spanX * scale) / 2;
-		const double offsetY = (m_height - spanY * scale) / 2;
+		Box const box = boundingBox(m_shapes);
+		double const spanX = std::max(box.maxX - box.minX, 1e-12);
+		double const spanY = std::max(box.maxY - box.minY, 1e-12);
+		double const scale = std::min((m_width - 2 * kMargin) / spanX, (m_height - 2 * kMargin) / spanY);
+		double const offsetX = (m_width - spanX * scale) / 2;
+		double const offsetY = (m_height - spanY * scale) / 2;
 		return {box.minX, box.minY, scale, offsetX, offsetY, static_cast<double>(m_height)};
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	// SVG's y axis points down, so y is flipped to make it point up.
-	std::pair<double, double> SvgDocument::toPixel(const Viewport& viewport, const geom::Point3<double>& p)
+	std::pair<double, double> SvgDocument::toPixel(Viewport const& viewport, geom::Point3<double> const& p)
 	{
-		const double x = viewport.offsetX + (p.x - viewport.minX) * viewport.scale;
-		const double y = viewport.height - (viewport.offsetY + (p.y - viewport.minY) * viewport.scale);
+		double const x = viewport.offsetX + (p.x - viewport.minX) * viewport.scale;
+		double const y = viewport.height - (viewport.offsetY + (p.y - viewport.minY) * viewport.scale);
 		return {x, y};
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void SvgDocument::writeShape(std::ostream& out, const SvgShape& shape, const Viewport& viewport)
+	void SvgDocument::writeShape(std::ostream& out, SvgShape const& shape, Viewport const& viewport)
 	{
 		if (shape.kind == SvgShape::Kind::Polyline)
 		{
@@ -120,7 +120,7 @@ namespace viz
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void SvgDocument::writePolyline(std::ostream& out, const SvgShape& shape, const Viewport& viewport)
+	void SvgDocument::writePolyline(std::ostream& out, SvgShape const& shape, Viewport const& viewport)
 	{
 		out << "<polyline fill=\"none\" stroke=\"" << shape.color << "\" stroke-width=\"" << shape.size << '"';
 		if (shape.dashed)
@@ -128,9 +128,9 @@ namespace viz
 			out << " stroke-dasharray=\"6 4\"";
 		}
 		out << " points=\"";
-		for (const geom::Point3<double>& p : shape.points)
+		for (geom::Point3<double> const& p : shape.points)
 		{
-			const auto [x, y] = toPixel(viewport, p);
+			auto const [x, y] = toPixel(viewport, p);
 			out << x << ',' << y << ' ';
 		}
 		out << "\"/>\n";
@@ -138,11 +138,11 @@ namespace viz
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void SvgDocument::writeDots(std::ostream& out, const SvgShape& shape, const Viewport& viewport)
+	void SvgDocument::writeDots(std::ostream& out, SvgShape const& shape, Viewport const& viewport)
 	{
-		for (const geom::Point3<double>& p : shape.points)
+		for (geom::Point3<double> const& p : shape.points)
 		{
-			const auto [x, y] = toPixel(viewport, p);
+			auto const [x, y] = toPixel(viewport, p);
 			out << "<circle cx=\"" << x << "\" cy=\"" << y << "\" r=\"" << shape.size << "\" fill=\"" << shape.color << "\"/>\n";
 		}
 	}
@@ -155,13 +155,13 @@ namespace viz
 	
 	namespace
 	{
-		Box boundingBox(const std::vector<SvgShape>& shapes)
+		Box boundingBox(std::vector<SvgShape> const& shapes)
 		{
 			constexpr double inf = std::numeric_limits<double>::infinity();
 			Box box{inf, inf, -inf, -inf};
-			for (const SvgShape& shape : shapes)
+			for (SvgShape const& shape : shapes)
 			{
-				for (const geom::Point3<double>& p : shape.points)
+				for (geom::Point3<double> const& p : shape.points)
 				{
 					box = {std::min(box.minX, p.x), std::min(box.minY, p.y), std::max(box.maxX, p.x), std::max(box.maxY, p.y)};
 				}

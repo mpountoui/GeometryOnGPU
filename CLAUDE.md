@@ -83,6 +83,10 @@ Follow these when writing or changing code:
 6. **Always initialize variables**, locals and the members declared in classes and structs
    alike. Use `{}` for the default value (`int m_degree{};`, `std::vector<T> m_knots{};`,
    `T x{};`), or `= value` / `{value}` when there is a meaningful starting value.
+7. **`const` goes after the type it applies to ("east const")**, everywhere: references
+   `Point3<T> const& p`, pointers `char const* name`, values `T const w = ...`,
+   `auto const [a, b] = ...`, and template arguments `std::span<T const>`. Never `const Type`.
+   (`) const` on member functions is already in that position.)
 
 ```cpp
 namespace geom

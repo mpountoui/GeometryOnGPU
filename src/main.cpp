@@ -80,7 +80,7 @@ namespace
 	// The rational cubic of Figure 4.1 (The NURBS Book, p.119), with made-up control points.
 	Curve figure41Curve()
 	{
-		const Points points{{0, 0, 0}, {1, 2, 0}, {3, 3, 0}, {4, 0, 0}, {6, 0, 0}, {7, 2, 0}, {9, 2, 0}};
+		Points const points{{0, 0, 0}, {1, 2, 0}, {3, 3, 0}, {4, 0, 0}, {6, 0, 0}, {7, 2, 0}, {9, 2, 0}};
 		return Curve(3, {0, 0, 0, 0, 0.25, 0.5, 0.75, 1, 1, 1, 1}, points, Values{1, 1, 1, 3, 1, 1, 1});
 	}
 	
@@ -89,7 +89,7 @@ namespace
 	// The quadratic of Ex4.1 (p.122) with weight w_1 changed, as in Figure 4.4.
 	Curve example41Curve(double w1)
 	{
-		const Points points{{0, 0, 0}, {1, 1, 0}, {3, 2, 0}, {4, 1, 0}, {5, -1, 0}};
+		Points const points{{0, 0, 0}, {1, 1, 0}, {3, 2, 0}, {4, 1, 0}, {5, -1, 0}};
 		return Curve(2, {0, 0, 0, 1, 2, 3, 3, 3}, points, Values{1, w1, 1, 1, 1});
 	}
 	
@@ -98,13 +98,13 @@ namespace
 	// A quarter of the unit circle as a rational quadratic Bezier (book Chapter 7).
 	Curve quarterCircle()
 	{
-		const Points points{{1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
+		Points const points{{1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
 		return Curve(2, {0, 0, 0, 1, 1, 1}, points, Values{1, std::numbers::sqrt2 / 2, 1});
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void writeSingleCurve(const std::filesystem::path& path, const Curve& curve)
+	void writeSingleCurve(std::filesystem::path const& path, Curve const& curve)
 	{
 		viz::SvgDocument svg(800, 600);
 		viz::addNurbsCurve(svg, curve, "#1f6feb", true);
@@ -115,7 +115,7 @@ namespace
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	// Figure 4.4: one control polygon, w_1 = 0.3 (green), 1 (blue) and 4 (purple).
-	void writeWeightComparison(const std::filesystem::path& path)
+	void writeWeightComparison(std::filesystem::path const& path)
 	{
 		viz::SvgDocument svg(800, 600);
 		viz::addNurbsCurve(svg, example41Curve(0.3), "#2da44e", true);
@@ -127,7 +127,7 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void writeDemoSvgs(const std::filesystem::path& directory)
+	void writeDemoSvgs(std::filesystem::path const& directory)
 	{
 		std::filesystem::create_directories(directory);
 		writeSingleCurve(directory / "figure41.svg", figure41Curve());
@@ -140,13 +140,13 @@ namespace
 	// --svg [directory]: writes the demo SVGs, by default to an "svg" folder next to the executable.
 	int runSvgDemo(int argc, char* argv[])
 	{
-		const std::filesystem::path directory = (argc >= 3) ? std::filesystem::path(argv[2]) : std::filesystem::path(argv[0]).parent_path() / "svg";
+		std::filesystem::path const directory = (argc >= 3) ? std::filesystem::path(argv[2]) : std::filesystem::path(argv[0]).parent_path() / "svg";
 		try
 		{
 			writeDemoSvgs(directory);
 			return 0;
 		}
-		catch (const std::exception& error)
+		catch (std::exception const& error)
 		{
 			std::cerr << "error: " << error.what() << '\n';
 			return 1;

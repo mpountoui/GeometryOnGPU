@@ -39,10 +39,10 @@ namespace geom
 	public:
 		// Rational curve from Euclidean control points and their weights.
 		// Throws std::invalid_argument if the data does not define a valid curve.
-		NurbsCurve(int degree, std::vector<T> knots, std::span<const Point3<T>> points, std::span<const T> weights);
+		NurbsCurve(int degree, std::vector<T> knots, std::span<Point3<T> const> points, std::span<T const> weights);
 		
 		// Non-rational B-spline curve: every weight is 1.
-		NurbsCurve(int degree, std::vector<T> knots, std::span<const Point3<T>> points);
+		NurbsCurve(int degree, std::vector<T> knots, std::span<Point3<T> const> points);
 		
 	public:
 		int degree() const noexcept;
@@ -50,8 +50,8 @@ namespace geom
 		std::size_t m() const noexcept;
 		std::size_t numControlPoints() const noexcept;
 		
-		std::span<const T> knots() const noexcept;
-		std::span<const Point4<T>> weightedControlPoints() const noexcept;
+		std::span<T const> knots() const noexcept;
+		std::span<Point4<T> const> weightedControlPoints() const noexcept;
 		
 		// Euclidean control point P_i and weight w_i. Throw std::out_of_range if i > n.
 		Point3<T> controlPoint(std::size_t i) const;
@@ -81,16 +81,16 @@ namespace geom
 		std::vector<Point4<T>> m_controlPointsW{};
 		
 	private:
-		[[noreturn]] static void fail(const std::string& message);
+		[[noreturn]] static void fail(std::string const& message);
 		
 		// Builds Pw_i = (w_i x_i, w_i y_i, w_i z_i, w_i). Book assumption, p.118: w_i > 0.
-		static std::vector<Point4<T>> makeWeightedPoints(std::span<const Point3<T>> points, std::span<const T> weights);
+		static std::vector<Point4<T>> makeWeightedPoints(std::span<Point3<T> const> points, std::span<T const> weights);
 	};
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	NurbsCurve<T>::NurbsCurve(int degree, std::vector<T> knots, std::span<const Point3<T>> points, std::span<const T> weights)
+	NurbsCurve<T>::NurbsCurve(int degree, std::vector<T> knots, std::span<Point3<T> const> points, std::span<T const> weights)
 		: m_degree(degree),
 		m_knots(std::move(knots)),
 		m_controlPointsW(makeWeightedPoints(points, weights))
@@ -101,7 +101,7 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	NurbsCurve<T>::NurbsCurve(int degree, std::vector<T> knots, std::span<const Point3<T>> points)
+	NurbsCurve<T>::NurbsCurve(int degree, std::vector<T> knots, std::span<Point3<T> const> points)
 		: NurbsCurve(degree, std::move(knots), points, std::vector<T>(points.size(), T{1}))
 	{}
 	
@@ -140,7 +140,7 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	std::span<const T> NurbsCurve<T>::knots() const noexcept
+	std::span<T const> NurbsCurve<T>::knots() const noexcept
 	{
 		return m_knots;
 	}
@@ -148,7 +148,7 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	std::span<const Point4<T>> NurbsCurve<T>::weightedControlPoints() const noexcept
+	std::span<Point4<T> const> NurbsCurve<T>::weightedControlPoints() const noexcept
 	{
 		return m_controlPointsW;
 	}
@@ -182,8 +182,8 @@ namespace geom
 	template <std::floating_point T>
 	bool NurbsCurve<T>::isRational() const noexcept
 	{
-		const T w0 = m_controlPointsW.front().w;
-		return std::ranges::any_of(m_controlPointsW, [w0](const Point4<T>& pw) { return pw.w != w0; });
+		T const w0 = m_controlPointsW.front().w;
+		return std::ranges::any_of(m_controlPointsW, [w0](Point4<T> const& pw) { return pw.w != w0; });
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -227,8 +227,8 @@ namespace geom
 	template <std::floating_point T>
 	void NurbsCurve<T>::checkCounts() const
 	{
-		const auto p = static_cast<std::size_t>(m_degree);
-		const std::size_t numPoints = m_controlPointsW.size();
+		auto const p = static_cast<std::size_t>(m_degree);
+		std::size_t const numPoints = m_controlPointsW.size();
 		if (numPoints < p + 1)
 		{
 			fail("need at least degree + 1 control points");
@@ -262,8 +262,8 @@ namespace geom
 	template <std::floating_point T>
 	void NurbsCurve<T>::checkClamped() const
 	{
-		const auto p = static_cast<std::size_t>(m_degree);
-		const std::size_t last = m_knots.size() - 1;
+		auto const p = static_cast<std::size_t>(m_degree);
+		std::size_t const last = m_knots.size() - 1;
 		for (std::size_t i = 1; i <= p; ++i)
 		{
 			if (m_knots[i] != m_knots[0])
@@ -282,8 +282,8 @@ namespace geom
 	template <std::floating_point T>
 	void NurbsCurve<T>::checkNonEmptyDomain() const
 	{
-		const auto p = static_cast<std::size_t>(m_degree);
-		const std::size_t last = m_knots.size() - 1;
+		auto const p = static_cast<std::size_t>(m_degree);
+		std::size_t const last = m_knots.size() - 1;
 		if (!(m_knots[p] < m_knots[p + 1]))
 		{
 			fail("the first knot is repeated more than degree + 1 times");
@@ -301,8 +301,8 @@ namespace geom
 	template <std::floating_point T>
 	void NurbsCurve<T>::checkInteriorMultiplicities() const
 	{
-		const auto p = static_cast<std::size_t>(m_degree);
-		const std::size_t last = m_knots.size() - 1;
+		auto const p = static_cast<std::size_t>(m_degree);
+		std::size_t const last = m_knots.size() - 1;
 		std::size_t multiplicity = 1;
 		for (std::size_t i = p + 2; i + p + 1 <= last; ++i)
 		{
@@ -317,7 +317,7 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	void NurbsCurve<T>::fail(const std::string& message)
+	void NurbsCurve<T>::fail(std::string const& message)
 	{
 		throw std::invalid_argument("NurbsCurve: " + message);
 	}
@@ -325,7 +325,7 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	std::vector<Point4<T>> NurbsCurve<T>::makeWeightedPoints(std::span<const Point3<T>> points, std::span<const T> weights)
+	std::vector<Point4<T>> NurbsCurve<T>::makeWeightedPoints(std::span<Point3<T> const> points, std::span<T const> weights)
 	{
 		if (weights.size() != points.size())
 		{
@@ -335,7 +335,7 @@ namespace geom
 		result.reserve(points.size());
 		for (std::size_t i = 0; i < points.size(); ++i)
 		{
-			const T w = weights[i];
+			T const w = weights[i];
 			if (!(w > T{0}) || !std::isfinite(w))
 			{
 				fail("weights must be positive and finite");

@@ -15,7 +15,7 @@ Code: `src/geom/curve_point.hpp` and `NurbsCurve::operator()`. Tests: `tests/tes
 ## Our version
 
 ```cpp
-Point3<T> curvePoint(int degree, std::span<const T> knots, std::span<const Point4<T>> weightedPoints, T u);
+Point3<T> curvePoint(int degree, std::span<T const> knots, std::span<Point4<T> const> weightedPoints, T u);
 Point3<T> NurbsCurve<T>::operator()(T u) const;   // curve(u), calls curvePoint with the curve's data
 ```
 
