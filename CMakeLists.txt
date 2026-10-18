@@ -105,6 +105,18 @@ target_compile_features(viz PRIVATE cxx_std_23)
 target_link_libraries(viz PUBLIC geom)
 geom_enable_warnings(viz)
 
+# ---- The GPU helper library (only with CUDA) ----------------------------------------------
+# Host-side CUDA helpers: error checking (cuda_check) and the RAII DeviceBuffer<T> (header-only
+# template). PUBLIC CUDA::cudart: whatever links "gpu" can include <cuda_runtime.h> and call
+# the CUDA runtime too.
+if(GEOM_HAS_CUDA)
+	add_library(gpu STATIC src/gpu/cuda_check.cpp)
+	target_compile_features(gpu PRIVATE cxx_std_23)
+	target_include_directories(gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+	target_link_libraries(gpu PUBLIC geom CUDA::cudart)
+	geom_enable_warnings(gpu)
+endif()
+
 # ---- The program -------------------------------------------------------------------------
 # A "target" is something to build. add_executable(<name> <sources...>) creates an
 # executable called geometry_on_gpu from the listed source files. New .cpp/.cu files
@@ -156,3 +168,8 @@ geom_add_test(nurbs_curve)
 geom_add_test(basis)
 geom_add_test(curve_point)
 geom_add_test(svg viz)
+
+# Tests that need CUDA (and a GPU to run on).
+if(GEOM_HAS_CUDA)
+	geom_add_test(device_buffer gpu)
+endif()

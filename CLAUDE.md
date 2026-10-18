@@ -41,6 +41,9 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
 - `src/viz/`: host-only visualization, the `viz` static library. `SvgDocument`
   (`svg_document.hpp/.cpp`) draws curves, control polygons and points as SVG (xy projection,
   y up). Never include it from `.cu` files.
+- `src/gpu/`: host-side CUDA helpers, the `gpu` static library (only built with CUDA):
+  `checkCuda`/`checkLaunch` (`cuda_check.hpp/.cpp`, throw `std::runtime_error`) and the
+  move-only RAII `DeviceBuffer<T>` (`device_buffer.hpp`, synchronous `upload`/`download`).
 
 TODO: host/device data flow, once the first kernel exists. Longer notes go in `docs/`.
 
