@@ -2,6 +2,8 @@
 
 #include <concepts>
 
+#include "geom/host_device.hpp"
+
 namespace geom
 {
 	// Euclidean point P = (x, y, z); the book's POINT (Section 13.3, p.597).
@@ -30,7 +32,7 @@ namespace geom
 	
 	// Projection C = Cw / w (the book's notation, p.124): the Euclidean point of a weighted point.
 	template <std::floating_point T>
-	Point3<T> Get3DPoint(Point4<T> const& pw)
+	GEOM_HD Point3<T> Get3DPoint(Point4<T> const& pw)
 	{
 		return {pw.x / pw.w, pw.y / pw.w, pw.z / pw.w};
 	}

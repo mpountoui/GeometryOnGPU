@@ -9,6 +9,10 @@ Geometry processing on the GPU, written in C/C++ and CUDA.
 ## Build, run, test
 
 CMake (>= 3.24). CUDA is optional: without a CUDA compiler the project builds CPU-only.
+Tests and benchmarks use `<print>`, so the host compiler must be GCC >= 14 (or a recent Clang/libc++);
+on the NVIDIA Linux box (Ubuntu 24.04, default GCC 13) configure with `-DCMAKE_CXX_COMPILER=g++-14`.
+That box has a B300 (sm_103) but nvcc 12.8, which does not know sm_103, so `native` fails: also pass
+`-DCMAKE_CUDA_ARCHITECTURES=100` (sm_100 code runs on sm_103). Drop this once CUDA is >= 12.9.
 The dev Mac (Apple Silicon) has no `nvcc`, so CUDA code can only be built and run on an NVIDIA machine.
 
 ```
@@ -30,6 +34,8 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
 - Algorithms are free functions on spans, with no allocation or exceptions so they can move
   into kernels: `basis.hpp` (A2.1 `findSpan`, A2.2 `basisFunctions`), `curve_point.hpp`
   (A4.1 `curvePoint`, on raw data). Each has a doc in `docs/algorithms/`.
+  Functions callable from kernels are marked `GEOM_HD` (`host_device.hpp`). They may use
+  `std::span`/`std::array` because `geom` adds `--expt-relaxed-constexpr` for `.cu` files.
 - `curve(u)` (`NurbsCurve::operator()`) evaluates a point; it calls `curvePoint` with the curve's data.
   So `nurbs_curve.hpp` includes `curve_point.hpp`, never the other way round.
 - `src/viz/`: host-only visualization, the `viz` static library. `SvgDocument`

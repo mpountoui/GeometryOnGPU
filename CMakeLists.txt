@@ -91,6 +91,10 @@ add_library(geom INTERFACE)
 target_include_directories(geom INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # .cu files will include these headers and nvcc has no C++23, so the headers need only C++20.
 target_compile_features(geom INTERFACE cxx_std_20)
+# The algorithms use std::span and std::array in device code. Their members are constexpr host
+# functions; this nvcc flag lets __device__ code call constexpr functions. The generator
+# expression $<$<COMPILE_LANGUAGE:CUDA>:...> adds it to .cu files only (g++ would reject it).
+target_compile_options(geom INTERFACE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 
 # ---- The visualization library -----------------------------------------------------------
 # Code that is not a template goes in .cpp files, compiled once into a library. A STATIC

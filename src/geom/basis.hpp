@@ -6,6 +6,8 @@
 #include <span>
 #include <type_traits>
 
+#include "geom/host_device.hpp"
+
 namespace geom
 {
 	// B-spline basis functions, The NURBS Book Section 2.5 (pp.67-70). See
@@ -27,24 +29,24 @@ namespace geom
 	// the last non-empty span. Precondition: u in [u_p, u_m]; outside it, u is clamped to the
 	// first or last span.
 	template <std::floating_point T>
-	std::size_t findSpan(int degree, std::type_identity_t<std::span<T const>> knots, T u);
+	GEOM_HD std::size_t findSpan(int degree, std::type_identity_t<std::span<T const>> knots, T u);
 	
 	// A2.2 BasisFuns (p.70): the p + 1 nonvanishing basis functions at u in the given span.
 	// values must hold degree + 1 entries; values[r] = N_{span-p+r, p}(u).
 	template <std::floating_point T>
-	void basisFunctions(std::size_t span, T u, int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<T>> values);
+	GEOM_HD void basisFunctions(std::size_t span, T u, int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<T>> values);
 	
 	namespace detail
 	{
 		// The binary search of A2.1 on the span indices [low, high).
 		template <std::floating_point T>
-		std::size_t binarySearchSpan(std::span<T const> knots, T u, std::size_t low, std::size_t high);
+		GEOM_HD std::size_t binarySearchSpan(std::span<T const> knots, T u, std::size_t low, std::size_t high);
 	}  // namespace detail
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	std::size_t findSpan(int degree, std::type_identity_t<std::span<T const>> knots, T u)
+	GEOM_HD std::size_t findSpan(int degree, std::type_identity_t<std::span<T const>> knots, T u)
 	{
 		auto const p = static_cast<std::size_t>(degree);
 		std::size_t const n = knots.size() - p - 2;
@@ -65,7 +67,7 @@ namespace geom
 	// left[j - r] = u - U[span + 1 + r - j] and right[r + 1] = U[span + 1 + r] - u are the book's
 	// scratch arrays, recomputed from the knots instead of stored (see the doc).
 	template <std::floating_point T>
-	void basisFunctions(std::size_t span, T u, int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<T>> values)
+	GEOM_HD void basisFunctions(std::size_t span, T u, int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<T>> values)
 	{
 		auto const p = static_cast<std::size_t>(degree);
 		assert(values.size() == p + 1);
@@ -88,7 +90,7 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	std::size_t detail::binarySearchSpan(std::span<T const> knots, T u, std::size_t low, std::size_t high)
+	GEOM_HD std::size_t detail::binarySearchSpan(std::span<T const> knots, T u, std::size_t low, std::size_t high)
 	{
 		std::size_t mid = (low + high) / 2;
 		while (u < knots[mid] || u >= knots[mid + 1])
