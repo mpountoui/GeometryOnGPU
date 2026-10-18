@@ -15,7 +15,8 @@ The dev Mac (Apple Silicon) has no `nvcc`, so CUDA code can only be built and ru
 cmake -S . -B build                  # configure (-DGEOM_ENABLE_CUDA=OFF to force CPU-only)
 cmake --build build                  # build
 ./build/geometry_on_gpu              # run
-ctest --test-dir build --output-on-failure   # test (plain executables with a CHECK macro, no framework)
+ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
+                                             # registered with geom_add_test(<name>), CHECK from tests/check.hpp
 # benchmark:
 ```
 
@@ -25,6 +26,8 @@ ctest --test-dir build --output-on-failure   # test (plain executables with a CH
   `std::floating_point T` so float/double can be compared before fixing the kernel precision.
 - `NurbsCurve<T>` (`src/geom/nurbs_curve.hpp`) is a host-side, immutable, validated owner of
   degree, knots and weighted control points. GPU code will get a separate non-owning view.
+- Algorithms are free functions on spans (`src/geom/basis.hpp`: A2.1 `findSpan`, A2.2
+  `basisFunctions`), with no allocation or exceptions so they can move into kernels.
 
 TODO: host/device data flow, once the first kernel exists. Longer notes go in `docs/`.
 

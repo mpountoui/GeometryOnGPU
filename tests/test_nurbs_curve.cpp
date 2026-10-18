@@ -1,9 +1,9 @@
 #include <cmath>
-#include <print>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
+#include "check.hpp"
 #include "geom/nurbs_curve.hpp"
 
 using geom::NurbsCurve;
@@ -12,20 +12,6 @@ using geom::Point4;
 
 namespace
 {
-	int failures = 0;
-	
-#define CHECK(cond) \
-	do \
-	{ \
-		if (!(cond)) \
-		{ \
-			std::println(stderr, "{}:{}: CHECK failed: {}", __FILE__, __LINE__, #cond); \
-			++failures; \
-		} \
-	} while (false)
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
 	template <typename F>
 	bool throwsInvalidArgument(F&& f)
 	{
@@ -186,12 +172,5 @@ namespace
 int main()
 {
 	runAllTests();
-	
-	if (failures > 0)
-	{
-		std::println(stderr, "{} check(s) failed", failures);
-		return 1;
-	}
-	std::println("All NurbsCurve tests passed");
-	return 0;
+	return test::report("NurbsCurve");
 }

@@ -120,8 +120,14 @@ endif()
 #   ctest --test-dir build --output-on-failure
 enable_testing()
 
-add_executable(test_nurbs_curve tests/test_nurbs_curve.cpp)
-target_compile_features(test_nurbs_curve PRIVATE cxx_std_23)
-target_link_libraries(test_nurbs_curve PRIVATE geom)
-geom_enable_warnings(test_nurbs_curve)
-add_test(NAME nurbs_curve COMMAND test_nurbs_curve)
+# geom_add_test(<name>) builds tests/test_<name>.cpp into test_<name> and registers it with CTest.
+function(geom_add_test name)
+	add_executable(test_${name} tests/test_${name}.cpp)
+	target_compile_features(test_${name} PRIVATE cxx_std_23)
+	target_link_libraries(test_${name} PRIVATE geom)
+	geom_enable_warnings(test_${name})
+	add_test(NAME ${name} COMMAND test_${name})
+endfunction()
+
+geom_add_test(nurbs_curve)
+geom_add_test(basis)
