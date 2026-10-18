@@ -15,6 +15,7 @@ The dev Mac (Apple Silicon) has no `nvcc`, so CUDA code can only be built and ru
 cmake -S . -B build                  # configure (-DGEOM_ENABLE_CUDA=OFF to force CPU-only)
 cmake --build build                  # build
 ./build/geometry_on_gpu              # run
+./build/geometry_on_gpu --svg [dir]  # write demo curve images (default: build/svg/)
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
 # benchmark:
@@ -29,6 +30,8 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
 - Algorithms are free functions on spans, with no allocation or exceptions so they can move
   into kernels: `basis.hpp` (A2.1 `findSpan`, A2.2 `basisFunctions`), `curve_point.hpp`
   (A4.1 `curvePoint`). Each has a doc in `docs/algorithms/`.
+- `src/viz/`: host-only visualization. `svg_document.hpp` draws curves, control polygons and
+  points as SVG (xy projection, y up). Never include it from `.cu` files.
 
 TODO: host/device data flow, once the first kernel exists. Longer notes go in `docs/`.
 
