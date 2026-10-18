@@ -15,7 +15,7 @@ spiral in xy, rising in z, weights 0.5 to 1.5), 100 control points, uniform clam
 Run with `--svg` to see it.
 Best of 5 runs after one warm-up. Code: `benchmarks/bench_curve_point.cpp`.
 
-### 2026-10-18, Apple M1 (8 cores, 1 used), Apple clang 21, `-O3 -DNDEBUG`, commit after 493a926
+### 2026-10-18, Apple M1 (8 cores, 1 used), Apple clang 21, `-O3 -DNDEBUG`, code as of commit "Add CPU benchmark for curve point evaluation"
 
 | degree | N | type | best [ms] | per point [ns] | Mpoints/s |
 |---|---|---|---|---|---|
