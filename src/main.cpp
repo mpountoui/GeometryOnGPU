@@ -4,29 +4,68 @@
 #include <cuda_runtime.h>
 #endif
 
-int main() {
-  std::cout << "GeometryOnGPU\n";
-
+namespace
+{
 #ifdef GEOM_HAS_CUDA
-  int deviceCount = 0;
-  const cudaError_t err = cudaGetDeviceCount(&deviceCount);
-  if (err != cudaSuccess) {
-    std::cerr << "CUDA error: " << cudaGetErrorString(err) << '\n';
-    return 1;
-  }
-  for (int i = 0; i < deviceCount; ++i) {
-    cudaDeviceProp prop{};
-    const cudaError_t perr = cudaGetDeviceProperties(&prop, i);
-    if (perr != cudaSuccess) {
-      std::cerr << "CUDA error: " << cudaGetErrorString(perr) << '\n';
-      return 1;
-    }
-    std::cout << "CUDA device " << i << ": " << prop.name << " (sm_" << prop.major << prop.minor
-              << ")\n";
-  }
-  if (deviceCount == 0) std::cout << "No CUDA devices found\n";
+	// Returns false (after printing the error) if a CUDA call failed.
+	bool checkCuda(cudaError_t err)
+	{
+		if (err == cudaSuccess)
+		{
+			return true;
+		}
+		std::cerr << "CUDA error: " << cudaGetErrorString(err) << '\n';
+		return false;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	bool printCudaDevice(int index)
+	{
+		cudaDeviceProp prop{};
+		if (!checkCuda(cudaGetDeviceProperties(&prop, index)))
+		{
+			return false;
+		}
+		std::cout << "CUDA device " << index << ": " << prop.name << " (sm_" << prop.major << prop.minor << ")\n";
+		return true;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	bool printCudaDevices()
+	{
+		int deviceCount = 0;
+		if (!checkCuda(cudaGetDeviceCount(&deviceCount)))
+		{
+			return false;
+		}
+		for (int i = 0; i < deviceCount; ++i)
+		{
+			if (!printCudaDevice(i))
+			{
+				return false;
+			}
+		}
+		if (deviceCount == 0)
+		{
+			std::cout << "No CUDA devices found\n";
+		}
+		return true;
+	}
 #else
-  std::cout << "Built without CUDA\n";
+	bool printCudaDevices()
+	{
+		std::cout << "Built without CUDA\n";
+		return true;
+	}
 #endif
-  return 0;
+}  // namespace
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+
+int main()
+{
+	std::cout << "GeometryOnGPU\n";
+	return printCudaDevices() ? 0 : 1;
 }
