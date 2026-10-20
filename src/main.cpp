@@ -1,11 +1,14 @@
 #include <exception>
 #include <filesystem>
+#include <format>
 #include <iostream>
 #include <numbers>
 #include <string_view>
 #include <vector>
 
+#include "geom/newton_raphson.hpp"
 #include "geom/nurbs_curve.hpp"
+#include "viz/newton_plot.hpp"
 #include "viz/svg_document.hpp"
 
 #ifdef GEOM_HAS_CUDA
@@ -127,12 +130,27 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// A Newton-Raphson plot for f(x) = 0 from x0, drawn on [a, b].
+	template <typename F, typename DF>
+	void writeNewtonPlot(std::filesystem::path const& path, F f, DF df, double x0, double a, double b)
+	{
+		viz::SvgDocument svg(800, 600);
+		geom::NewtonResult<double> const result = viz::addNewtonPlot(svg, f, df, x0, a, b);
+		svg.save(path);
+		std::cout << "wrote " << path.string() << std::format("  (root {:.12g} after {} steps)", result.root, result.iterations) << '\n';
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	void writeDemoSvgs(std::filesystem::path const& directory)
 	{
 		std::filesystem::create_directories(directory);
 		writeSingleCurve(directory / "figure41.svg", figure41Curve());
 		writeSingleCurve(directory / "quarter_circle.svg", quarterCircle());
 		writeWeightComparison(directory / "weights.svg");
+		// Newton's own example x^3 - 2x - 5 = 0, and x^2 - 2 = 0 (sqrt 2), both from x0 = 3.
+		writeNewtonPlot(directory / "newton_cubic.svg", [](double x) { return x * x * x - 2.0 * x - 5.0; }, [](double x) { return 3.0 * x * x - 2.0; }, 3.0, 1.5, 3.2);
+		writeNewtonPlot(directory / "newton_sqrt2.svg", [](double x) { return x * x - 2.0; }, [](double x) { return 2.0 * x; }, 3.0, 0.0, 3.2);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

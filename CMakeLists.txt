@@ -100,7 +100,7 @@ target_compile_options(geom INTERFACE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-
 # Code that is not a template goes in .cpp files, compiled once into a library. A STATIC
 # library is compiled code that gets copied into each executable that links it.
 # PUBLIC means whatever links "viz" also gets what viz links (geom and its include directory).
-add_library(viz STATIC src/viz/svg_document.cpp)
+add_library(viz STATIC src/viz/svg_document.cpp src/viz/newton_plot.cpp)
 target_compile_features(viz PRIVATE cxx_std_23)
 target_link_libraries(viz PUBLIC geom)
 geom_enable_warnings(viz)
@@ -168,6 +168,7 @@ geom_add_test(nurbs_curve)
 geom_add_test(basis)
 geom_add_test(curve_point)
 geom_add_test(svg viz)
+geom_add_test(newton_raphson)
 
 # Tests that need CUDA (and a GPU to run on).
 if(GEOM_HAS_CUDA)

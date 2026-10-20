@@ -53,6 +53,13 @@ namespace viz
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	void SvgDocument::setKeepAspectRatio(bool keep)
+	{
+		m_keepAspectRatio = keep;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	std::string SvgDocument::toString() const
 	{
 		Viewport const viewport = fitViewport();
@@ -82,16 +89,23 @@ namespace viz
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Uniform scale so the bounding box fits inside the margins, centred in the image.
+	// Scales so the bounding box fits inside the margins (the same scale for x and y if the aspect
+	// ratio is kept), centred in the image.
 	SvgDocument::Viewport SvgDocument::fitViewport() const
 	{
 		Box const box = boundingBox(m_shapes);
 		double const spanX = std::max(box.maxX - box.minX, 1e-12);
 		double const spanY = std::max(box.maxY - box.minY, 1e-12);
-		double const scale = std::min((m_width - 2 * kMargin) / spanX, (m_height - 2 * kMargin) / spanY);
-		double const offsetX = (m_width - spanX * scale) / 2;
-		double const offsetY = (m_height - spanY * scale) / 2;
-		return {box.minX, box.minY, scale, offsetX, offsetY, static_cast<double>(m_height)};
+		double scaleX = (m_width - 2 * kMargin) / spanX;
+		double scaleY = (m_height - 2 * kMargin) / spanY;
+		if (m_keepAspectRatio)
+		{
+			scaleX = std::min(scaleX, scaleY);
+			scaleY = scaleX;
+		}
+		double const offsetX = (m_width - spanX * scaleX) / 2;
+		double const offsetY = (m_height - spanY * scaleY) / 2;
+		return {box.minX, box.minY, scaleX, scaleY, offsetX, offsetY, static_cast<double>(m_height)};
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -99,8 +113,8 @@ namespace viz
 	// SVG's y axis points down, so y is flipped to make it point up.
 	std::pair<double, double> SvgDocument::toPixel(Viewport const& viewport, geom::Point3<double> const& p)
 	{
-		double const x = viewport.offsetX + (p.x - viewport.minX) * viewport.scale;
-		double const y = viewport.height - (viewport.offsetY + (p.y - viewport.minY) * viewport.scale);
+		double const x = viewport.offsetX + (p.x - viewport.minX) * viewport.scaleX;
+		double const y = viewport.height - (viewport.offsetY + (p.y - viewport.minY) * viewport.scaleY);
 		return {x, y};
 	}
 	

@@ -16,7 +16,8 @@ namespace viz
 {
 	// Writes 2D drawings as SVG images, for looking at curves. Only x and y of each point are
 	// drawn (the projection onto the xy plane). The drawing is scaled to fit the image, keeps its
-	// aspect ratio and has y pointing up, like the book's figures.
+	// aspect ratio (unless setKeepAspectRatio(false), e.g. for function plots) and has y pointing up,
+	// like the book's figures.
 	//
 	// Host-only (std::string, files); never include this from .cu files. SvgDocument is compiled
 	// in svg_document.cpp (the viz library); the templated helpers stay here.
@@ -47,6 +48,11 @@ namespace viz
 	public:
 		void addPolyline(std::vector<geom::Point3<double>> points, std::string color, double strokeWidth, bool dashed);
 		void addDots(std::vector<geom::Point3<double>> points, std::string color, double radius);
+		
+		// true (the default): one scale for x and y, so shapes keep their proportions.
+		// false: x and y are scaled separately to fill the image (for plots of y = f(x)).
+		void setKeepAspectRatio(bool keep);
+		
 		std::string toString() const;
 		
 		// Throws std::runtime_error if the file cannot be written.
@@ -57,7 +63,8 @@ namespace viz
 		{
 			double minX{};
 			double minY{};
-			double scale{};
+			double scaleX{};
+			double scaleY{};
 			double offsetX{};
 			double offsetY{};
 			double height{};
@@ -71,6 +78,7 @@ namespace viz
 		int m_width{};
 		int m_height{};
 		std::vector<SvgShape> m_shapes{};
+		bool m_keepAspectRatio{true};
 		
 	private:
 		static std::pair<double, double> toPixel(Viewport const& viewport, geom::Point3<double> const& p);

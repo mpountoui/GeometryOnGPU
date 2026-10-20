@@ -8,6 +8,7 @@
 
 #include "check.hpp"
 #include "geom/nurbs_curve.hpp"
+#include "viz/newton_plot.hpp"
 #include "viz/svg_document.hpp"
 
 using geom::Point3;
@@ -131,6 +132,35 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// Separate scales: a wide, flat line fills both the usable width (360) and height (260).
+	void testFreeAspectRatio()
+	{
+		SvgDocument doc(400, 300);
+		doc.setKeepAspectRatio(false);
+		doc.addPolyline({{0, 0, 0}, {100, 1, 0}}, "black", 1.0, false);
+		Pixels const pixels = firstPolylinePixels(doc.toString());
+		CHECK(test::near(pixels[1].first - pixels[0].first, 360.0, 0.02));
+		CHECK(test::near(pixels[0].second - pixels[1].second, 260.0, 0.02));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Newton plot of x^2 - 2 from 3: the x-axis, f, two lines per step, one dot per point
+	// (only the last one green), and the solver's result is returned.
+	void testNewtonPlot()
+	{
+		SvgDocument doc(400, 300);
+		geom::NewtonResult<double> const r = viz::addNewtonPlot(doc, [](double x) { return x * x - 2.0; }, [](double x) { return 2.0 * x; }, 3.0, 0.0, 3.5);
+		std::string const svg = doc.toString();
+		std::size_t const points = countOccurrences(svg, "<circle");
+		CHECK(r.status == geom::NewtonStatus::Converged);
+		CHECK(points >= 3);
+		CHECK(countOccurrences(svg, "<polyline") == 2 + 2 * (points - 1));
+		CHECK(countOccurrences(svg, "#2da44e") == 1);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	void runAllTests()
 	{
 		testEmptyDocument();
@@ -139,6 +169,8 @@ namespace
 		testAspectRatio();
 		testNurbsCurve();
 		testSave();
+		testFreeAspectRatio();
+		testNewtonPlot();
 	}
 }  // namespace
 

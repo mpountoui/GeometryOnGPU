@@ -33,14 +33,16 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   degree, knots and weighted control points. GPU code will get a separate non-owning view.
 - Algorithms are free functions on spans, with no allocation or exceptions so they can move
   into kernels: `basis.hpp` (A2.1 `findSpan`, A2.2 `basisFunctions`), `curve_point.hpp`
-  (A4.1 `curvePoint`, on raw data). Each has a doc in `docs/algorithms/`.
+  (A4.1 `curvePoint`, on raw data), `newton_raphson.hpp` (general 1D root finder for any `f`, `f'`).
+  Each has a doc in `docs/algorithms/`.
   Functions callable from kernels are marked `GEOM_HD` (`host_device.hpp`). They may use
   `std::span`/`std::array` because `geom` adds `--expt-relaxed-constexpr` for `.cu` files.
 - `curve(u)` (`NurbsCurve::operator()`) evaluates a point; it calls `curvePoint` with the curve's data.
   So `nurbs_curve.hpp` includes `curve_point.hpp`, never the other way round.
 - `src/viz/`: host-only visualization, the `viz` static library. `SvgDocument`
   (`svg_document.hpp/.cpp`) draws curves, control polygons and points as SVG (xy projection,
-  y up). Never include it from `.cu` files.
+  y up; `setKeepAspectRatio(false)` for function plots). `newton_plot.hpp/.cpp` plots Newton-Raphson
+  steps. Never include `viz` headers from `.cu` files.
 - `src/gpu/`: host-side CUDA helpers, the `gpu` static library (only built with CUDA):
   `checkCuda`/`checkLaunch` (`cuda_check.hpp/.cpp`, throw `std::runtime_error`) and the
   move-only RAII `DeviceBuffer<T>` (`device_buffer.hpp`, synchronous `upload`/`download`).
