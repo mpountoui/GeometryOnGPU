@@ -13,9 +13,9 @@ namespace gpu
 		}
 		throw std::runtime_error(std::format("{}:{}: CUDA error {}: {}", location.file_name(), location.line(), cudaGetErrorName(error), cudaGetErrorString(error)));
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	void checkLaunch(std::source_location location)
 	{
 		checkCuda(cudaGetLastError(), location);

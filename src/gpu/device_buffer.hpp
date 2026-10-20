@@ -28,48 +28,48 @@ namespace gpu
 	{
 	public:
 		DeviceBuffer() = default;
-
+		
 		// Uninitialized device memory for count elements.
 		explicit DeviceBuffer(std::size_t count);
-
+		
 		// Device memory with a copy of host.
 		explicit DeviceBuffer(std::span<T const> host);
-
+		
 		DeviceBuffer(DeviceBuffer&& other) noexcept;
 		DeviceBuffer& operator=(DeviceBuffer&& other) noexcept;
 		DeviceBuffer(DeviceBuffer const&) = delete;
 		DeviceBuffer& operator=(DeviceBuffer const&) = delete;
 		~DeviceBuffer();
-
+		
 	public:
 		T* data() noexcept;
 		T const* data() const noexcept;
 		std::size_t size() const noexcept;
 		std::size_t sizeBytes() const noexcept;
-
+		
 		// Copies host into the buffer. Throws std::invalid_argument if the sizes differ.
 		void upload(std::span<T const> host);
-
+		
 		// Copies the buffer into host. Throws std::invalid_argument if the sizes differ.
 		void download(std::span<T> host) const;
-
+		
 		// Copies the buffer into a new std::vector.
 		std::vector<T> download() const;
-
+		
 	private:
 		// Frees the memory (if any) and leaves the buffer empty.
 		void release() noexcept;
-
+		
 	private:
 		T* m_data{};
 		std::size_t m_size{};
-
+		
 	private:
 		static void checkSameSize(std::size_t bufferSize, std::size_t hostSize);
 	};
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	DeviceBuffer<T>::DeviceBuffer(std::size_t count)
@@ -80,9 +80,9 @@ namespace gpu
 			checkCuda(cudaMalloc(reinterpret_cast<void**>(&m_data), count * sizeof(T)));
 		}
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	DeviceBuffer<T>::DeviceBuffer(std::span<T const> host)
@@ -90,9 +90,9 @@ namespace gpu
 	{
 		upload(host);
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	// Takes over other's memory and leaves other empty, so only one destructor frees it.
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
@@ -101,9 +101,9 @@ namespace gpu
 		m_size(std::exchange(other.m_size, 0))
 	{
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	DeviceBuffer<T>& DeviceBuffer<T>::operator=(DeviceBuffer&& other) noexcept
@@ -116,54 +116,54 @@ namespace gpu
 		}
 		return *this;
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	DeviceBuffer<T>::~DeviceBuffer()
 	{
 		release();
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	T* DeviceBuffer<T>::data() noexcept
 	{
 		return m_data;
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	T const* DeviceBuffer<T>::data() const noexcept
 	{
 		return m_data;
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	std::size_t DeviceBuffer<T>::size() const noexcept
 	{
 		return m_size;
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	std::size_t DeviceBuffer<T>::sizeBytes() const noexcept
 	{
 		return m_size * sizeof(T);
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	void DeviceBuffer<T>::upload(std::span<T const> host)
@@ -174,9 +174,9 @@ namespace gpu
 			checkCuda(cudaMemcpy(m_data, host.data(), sizeBytes(), cudaMemcpyHostToDevice));
 		}
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	void DeviceBuffer<T>::download(std::span<T> host) const
@@ -187,9 +187,9 @@ namespace gpu
 			checkCuda(cudaMemcpy(host.data(), m_data, sizeBytes(), cudaMemcpyDeviceToHost));
 		}
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	std::vector<T> DeviceBuffer<T>::download() const
@@ -198,9 +198,9 @@ namespace gpu
 		download(std::span<T>(host));
 		return host;
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	// A destructor must not throw, so a cudaFree error is ignored here. It can only fail if the
 	// GPU is already in an error state, which an earlier checkCuda call will have reported.
 	template <typename T>
@@ -214,9 +214,9 @@ namespace gpu
 		m_data = nullptr;
 		m_size = 0;
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <typename T>
 	requires std::is_trivially_copyable_v<T>
 	void DeviceBuffer<T>::checkSameSize(std::size_t bufferSize, std::size_t hostSize)

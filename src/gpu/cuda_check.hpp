@@ -18,10 +18,10 @@ namespace gpu
 	// error message names the file and line of the failing call without needing a macro.
 	//
 	// Host-only. Compiled in cuda_check.cpp (the gpu library).
-
+	
 	// Throws std::runtime_error ("file:line: CUDA error <name>: <description>") if error is not cudaSuccess.
 	void checkCuda(cudaError_t error, std::source_location location = std::source_location::current());
-
+	
 	// Call right after a kernel launch (kernel<<<...>>>(...)), which itself returns nothing.
 	// Catches launch errors such as an invalid block size. Errors while the kernel runs are only
 	// reported by the next call that waits for the GPU (e.g. cudaMemcpy, cudaDeviceSynchronize).

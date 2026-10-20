@@ -22,9 +22,9 @@ namespace
 		CHECK(buffer.data() != nullptr);
 		CHECK(buffer.download() == host);
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	// The control point type: 16-byte aligned Point4<float> survives the copy unchanged.
 	void testRoundTripPoint4()
 	{
@@ -35,9 +35,9 @@ namespace
 		buffer.download(back);
 		CHECK(back == host);
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	// Moving transfers ownership: the source is left empty, so its destructor frees nothing.
 	void testMove()
 	{
@@ -51,18 +51,18 @@ namespace
 		c = std::move(b);
 		CHECK(b.data() == nullptr && c.data() == address);
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	void testEmpty()
 	{
 		DeviceBuffer<float> const buffer(0);
 		CHECK(buffer.data() == nullptr && buffer.size() == 0);
 		CHECK(buffer.download().empty());
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	void testSizeMismatchThrows()
 	{
 		DeviceBuffer<float> buffer(3);
@@ -78,9 +78,9 @@ namespace
 		}
 		CHECK(thrown);
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	// checkCuda passes cudaSuccess through and throws on an error, naming this file.
 	void testCheckCuda()
 	{
