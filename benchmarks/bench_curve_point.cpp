@@ -16,8 +16,10 @@
 
 // Benchmark: evaluate N points C(u) on a NURBS curve on the CPU (one thread) and time it.
 //
-//   bench_curve_point [N] [degree] [--svg]      defaults: N = 1000000, degree = 3
+//   bench_curve_point [N] [degree] [--knots K] [--svg]      defaults: N = 1000000, degree = 3
 //
+// --knots K sets the number of knots (uniform and clamped, so K - degree - 1 control points;
+// K >= 2 * (degree + 1)). Without it the curve has 100 control points.
 // --svg also saves a picture of the benchmark curve (xy projection) to svg/benchmark_curve.svg
 // next to the executable.
 //
@@ -29,7 +31,7 @@ namespace
 {
 	using Clock = std::chrono::steady_clock;
 	
-	constexpr std::size_t kNumControlPoints = 100;
+	constexpr std::size_t kDefaultControlPoints = 100;
 	constexpr int kRuns = 5;
 	
 	struct Timing
@@ -43,6 +45,8 @@ namespace
 	{
 		std::size_t count{1'000'000};
 		std::size_t degree{3};
+		std::size_t numKnots{};
+		bool knotsGiven{false};
 		bool writeSvg{false};
 		bool valid{true};
 	};
@@ -66,21 +70,23 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// A rational 3D spiral: control points on a widening spiral in xy that rises in z (about six
-	// turns), weights between 0.5 and 1.5.
+	// A rational 3D spiral with numKnots uniform clamped knots: control points on a widening spiral
+	// in xy that rises in z (about six turns per 100 points), weights between 0.5 and 1.5.
+	// Precondition: numKnots >= 2 * (degree + 1).
 	template <std::floating_point T>
-	geom::NurbsCurve<T> makeBenchmarkCurve(int degree)
+	geom::NurbsCurve<T> makeBenchmarkCurve(int degree, std::size_t numKnots)
 	{
+		std::size_t const numControlPoints = numKnots - static_cast<std::size_t>(degree) - 1;
 		std::vector<geom::Point3<T>> points{};
 		std::vector<T> weights{};
-		for (std::size_t i = 0; i < kNumControlPoints; ++i)
+		for (std::size_t i = 0; i < numControlPoints; ++i)
 		{
 			double const t = static_cast<double>(i);
 			double const radius = 1.0 + 0.08 * t;
 			points.push_back({static_cast<T>(radius * std::cos(0.4 * t)), static_cast<T>(radius * std::sin(0.4 * t)), static_cast<T>(0.05 * t)});
 			weights.push_back(static_cast<T>(1.0 + 0.5 * std::sin(0.7 * t)));
 		}
-		return geom::NurbsCurve<T>(degree, uniformClampedKnots<T>(degree, kNumControlPoints), points, weights);
+		return geom::NurbsCurve<T>(degree, uniformClampedKnots<T>(degree, numControlPoints), points, weights);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -130,9 +136,9 @@ namespace
 	
 	// One warm-up run, then kRuns timed runs.
 	template <std::floating_point T>
-	Timing timeEvaluation(int degree, std::size_t count)
+	Timing timeEvaluation(int degree, std::size_t numKnots, std::size_t count)
 	{
-		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree);
+		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree, numKnots);
 		std::vector<T> const params = evenlySpacedParameters(curve, count);
 		std::vector<geom::Point3<T>> out(count);
 		evaluateAll<T>(curve, params, out);
@@ -157,7 +163,7 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void printHeader(std::size_t count, int degree)
+	void printHeader(std::size_t count, int degree, std::size_t numKnots)
 	{
 #ifdef NDEBUG
 		std::string_view const build = "Release";
@@ -165,20 +171,20 @@ namespace
 		std::string_view const build = "Debug (asserts on): timings are NOT representative";
 #endif
 		std::println("NURBS curve point evaluation, CPU, 1 thread ({} build)", build);
-		std::println("curve: degree {}, {} control points, rational 3D spiral; N = {} points; best and median of {} runs", degree, kNumControlPoints, count, kRuns);
+		std::println("curve: degree {}, {} knots, {} control points, rational 3D spiral; N = {} points; best and median of {} runs", degree, numKnots, numKnots - static_cast<std::size_t>(degree) - 1, count, kRuns);
 		std::println("{:<8} {:>10} {:>11} {:>13} {:>11}   {}", "type", "best [ms]", "median [ms]", "per point [ns]", "Mpoints/s", "checksum");
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	// Saves the benchmark curve (double) with its control polygon as an SVG next to the executable.
-	void writeCurveSvg(char const* executable, int degree)
+	void writeCurveSvg(char const* executable, int degree, std::size_t numKnots)
 	{
 		std::filesystem::path const directory = std::filesystem::path(executable).parent_path() / "svg";
 		std::filesystem::create_directories(directory);
 		std::filesystem::path const path = directory / "benchmark_curve.svg";
 		viz::SvgDocument svg(800, 800);
-		viz::addNurbsCurve(svg, makeBenchmarkCurve<double>(degree), "#1f6feb", true);
+		viz::addNurbsCurve(svg, makeBenchmarkCurve<double>(degree, numKnots), "#1f6feb", true);
 		svg.save(path);
 		std::println("wrote {}", path.string());
 	}
@@ -199,26 +205,43 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// [N] [degree] in that order, plus an optional --svg anywhere.
+	// Handles argv[i] if it is a flag: --svg, or --knots K (which also consumes K, so it advances i).
+	// Returns false for a positional argument.
+	bool parseFlag(int argc, char* argv[], int& i, Options& options)
+	{
+		std::string_view const arg = argv[i];
+		if (arg == "--svg")
+		{
+			options.writeSvg = true;
+			return true;
+		}
+		if (arg == "--knots")
+		{
+			options.numKnots = i + 1 < argc ? parseNumber(argv[++i]) : 0;
+			options.knotsGiven = true;
+			return true;
+		}
+		return false;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// [N] [degree] in that order, plus the optional flags --knots K and --svg anywhere.
 	Options parseOptions(int argc, char* argv[])
 	{
 		Options options{};
 		std::vector<std::string_view> numbers{};
 		for (int i = 1; i < argc; ++i)
 		{
-			std::string_view const arg = argv[i];
-			if (arg == "--svg")
+			if (!parseFlag(argc, argv, i, options))
 			{
-				options.writeSvg = true;
-			}
-			else
-			{
-				numbers.push_back(arg);
+				numbers.push_back(argv[i]);
 			}
 		}
 		options.count = numbers.size() > 0 ? parseNumber(numbers[0]) : options.count;
 		options.degree = numbers.size() > 1 ? parseNumber(numbers[1]) : options.degree;
-		options.valid = numbers.size() <= 2 && options.count >= 2 && options.degree >= 1 && options.degree <= static_cast<std::size_t>(geom::kMaxDegree);
+		options.numKnots = options.knotsGiven ? options.numKnots : kDefaultControlPoints + options.degree + 1;
+		options.valid = numbers.size() <= 2 && options.count >= 2 && options.degree >= 1 && options.degree <= static_cast<std::size_t>(geom::kMaxDegree) && options.numKnots >= 2 * (options.degree + 1);
 		return options;
 	}
 }  // namespace
@@ -230,16 +253,16 @@ int main(int argc, char* argv[])
 	Options const options = parseOptions(argc, argv);
 	if (!options.valid)
 	{
-		std::println(stderr, "usage: bench_curve_point [N >= 2] [1 <= degree <= {}] [--svg]", geom::kMaxDegree);
+		std::println(stderr, "usage: bench_curve_point [N >= 2] [1 <= degree <= {}] [--knots K >= 2 * (degree + 1)] [--svg]", geom::kMaxDegree);
 		return 1;
 	}
 	int const degree = static_cast<int>(options.degree);
 	if (options.writeSvg)
 	{
-		writeCurveSvg(argv[0], degree);
+		writeCurveSvg(argv[0], degree, options.numKnots);
 	}
-	printHeader(options.count, degree);
-	printRow("float", timeEvaluation<float>(degree, options.count), options.count);
-	printRow("double", timeEvaluation<double>(degree, options.count), options.count);
+	printHeader(options.count, degree, options.numKnots);
+	printRow("float", timeEvaluation<float>(degree, options.numKnots, options.count), options.count);
+	printRow("double", timeEvaluation<double>(degree, options.numKnots, options.count), options.count);
 	return 0;
 }

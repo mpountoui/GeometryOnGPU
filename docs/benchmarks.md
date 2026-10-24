@@ -4,14 +4,15 @@ How to reproduce: build in Release (the default), then run the benchmark by hand
 
 ```
 cmake -S . -B build && cmake --build build
-./build/bench_curve_point [N] [degree] [--svg]   # --svg also saves build/svg/benchmark_curve.svg
+./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # --svg also saves build/svg/benchmark_curve.svg
 ```
 
 ## Curve point evaluation, CPU baseline (`bench_curve_point`)
 
 What is measured: `out[k] = curve(u_k)` for N evenly spaced parameters, one thread, results
 written to a pre-allocated array. Curve: a rational 3D spiral (control points on a widening
-spiral in xy, rising in z, weights 0.5 to 1.5), 100 control points, uniform clamped knots.
+spiral in xy, rising in z, weights 0.5 to 1.5), 100 control points (or K - degree - 1 with
+`--knots K`), uniform clamped knots.
 Run with `--svg` to see it.
 Best of 5 runs after one warm-up. Code: `benchmarks/bench_curve_point.cpp`.
 
