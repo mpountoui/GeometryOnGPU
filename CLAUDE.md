@@ -10,9 +10,11 @@ Geometry processing on the GPU, written in C/C++ and CUDA.
 
 CMake (>= 3.24). CUDA is optional: without a CUDA compiler the project builds CPU-only.
 Tests and benchmarks use `<print>`, so the host compiler must be GCC >= 14 (or a recent Clang/libc++);
-on the NVIDIA Linux box (Ubuntu 24.04, default GCC 13) configure with `-DCMAKE_CXX_COMPILER=g++-14`.
-That box has a B300 (sm_103) but nvcc 12.8, which does not know sm_103, so `native` fails: also pass
-`-DCMAKE_CUDA_ARCHITECTURES=100` (sm_100 code runs on sm_103). Drop this once CUDA is >= 12.9.
+on the NVIDIA Linux boxes (Ubuntu 24.04, default GCC 13) install `g++-14` and configure with
+`-DCMAKE_CXX_COMPILER=g++-14` (a fresh build dir: CMake caches the compiler).
+Both boxes have nvcc 12.8. The RTX A4000 box (sm_86) works with `native`. The B300 box (sm_103) does not,
+because nvcc 12.8 does not know sm_103: there also pass `-DCMAKE_CUDA_ARCHITECTURES=100`
+(sm_100 code runs on sm_103). Drop this once CUDA is >= 12.9.
 The dev Mac (Apple Silicon) has no `nvcc`, so CUDA code can only be built and run on an NVIDIA machine.
 
 ```
