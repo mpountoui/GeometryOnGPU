@@ -1,8 +1,10 @@
 # Precomputed span polynomials (basis and curve)
 
-Code: `src/geom/basis_polynomials.hpp` (step 2, CPU basis table; next: step 3, the kernel).
-Tests: `tests/test_basis_polynomials.cpp`, against `basisFunctions` (A2.2); later also
-`curvePoint` (A4.1).
+Code: `src/geom/basis_polynomials.hpp` (one span's basis polynomials), `src/geom/basis_table.hpp`
+(the table for all spans, and evaluation from it). Next: the GPU kernel, and the curve table `A_j`.
+Tests: `tests/test_basis_polynomials.cpp` (against `basisFunctions`, A2.2) and
+`tests/test_basis_table.cpp` (points against `curvePoint`, A4.1).
+Benchmark: `bench_curve_point` times evaluation from the table against `curvePoint`.
 
 Goal: precompute everything that does not depend on `u`, so that a later `C(u)` query at any
 parameter is cheaper than A2.1 + A2.2 + A4.1. The precomputation runs once per curve, on the GPU.
@@ -125,7 +127,26 @@ is `O(p)`).
   (May be merged into kernel 1 later.)
 - Known weakness: 16 threads use half of a 32-thread warp. Later: several spans per block.
 
-## Evaluation (the query)
+## Evaluation from the basis table (implemented, CPU)
+
+`BasisTable<T>` (`basis_table.hpp`) holds, for every span `j = p..n` (row `j - p`), the span's
+`(p + 1) x (p + 1)` basis coefficients (layout as in `basis_polynomials.hpp`) and `1 / h_j`. Built once
+per curve; empty spans (repeated knots) stay 0 and are never used. A point is then
+
+    j = findSpan(u);  t = (u - u_j) * invH_j;
+    N_r = Horner(row r of span j, t)  for r = 0..p;   Cw = sum_r N_r * Pw[j-p+r];   C = Cw / w
+
+`curvePointFromTable` does this with no allocation (the `N_r` sit in a local array, as in
+`curvePoint`) and is `GEOM_HD`. The weighted sum is the same code as in `curvePoint`
+(`detail::weightedSum`), so the two methods differ only in how the `N_r` are found.
+Work per point: binary search, `p (p + 1)` multiply-adds for the `N_r` (no divisions), plus the
+weighted sum `4 (p + 1)`; A2.2 instead does `O(p^2)` work with `p (p + 1) / 2` divisions.
+Memory: `(p + 1)^2 + 1` values per span (17 for `p = 3`, 101 for `p = 9`).
+
+## Evaluation from a curve table (planned)
+
+Multiplying the basis table by the control points once gives the curve itself per span, so a
+point needs no basis functions at all:
 
     j = findSpan(u);  t = (u - u_j) * invH_j;  Cw = Horner(A_j, t);  C = Cw / w
 

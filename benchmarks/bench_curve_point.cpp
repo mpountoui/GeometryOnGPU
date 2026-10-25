@@ -7,14 +7,22 @@
 #include <filesystem>
 #include <print>
 #include <span>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
 
+#include "geom/basis_table.hpp"
 #include "geom/nurbs_curve.hpp"
 #include "viz/svg_document.hpp"
 
-// Benchmark: evaluate N points C(u) on a NURBS curve on the CPU (one thread) and time it.
+// Benchmark: evaluate N points C(u) on a NURBS curve on the CPU (one thread) and time it, with two
+// methods:
+//   direct  everything per point: findSpan (A2.1), basisFunctions (A2.2), weighted sum (A4.1);
+//   table   the basis polynomials of every span are computed once (BasisTable); per point only
+//           findSpan, Horner on the span's p + 1 polynomials, and the same weighted sum.
+// The table's one-time build is timed separately, and the largest distance between the two
+// methods' points is printed as a check that they agree.
 //
 //   bench_curve_point [N] [degree] [--knots K] [--svg]      defaults: N = 1000000, degree = 3
 //
@@ -23,8 +31,8 @@
 // --svg also saves a picture of the benchmark curve (xy projection) to svg/benchmark_curve.svg
 // next to the executable.
 //
-// Only the evaluation loop is timed: the curve, the parameters and the output array are set up
-// before. One warm-up run, then the best and the median of kRuns runs. The checksum is printed
+// Only the evaluation loops are timed: the curve, the parameters, the table and the output arrays
+// are set up before. One warm-up run, then the best and the median of kRuns runs. The checksum is printed
 // so the compiler cannot skip the work, and it lets float and double results be compared.
 
 namespace
@@ -34,11 +42,23 @@ namespace
 	constexpr std::size_t kDefaultControlPoints = 100;
 	constexpr int kRuns = 5;
 	
+	// Written by timeTableBuild so the compiler cannot drop the table builds it times.
+	double volatile checksumSink = 0.0;
+	
 	struct Timing
 	{
 		double bestSeconds{};
 		double medianSeconds{};
 		double checksum{};
+	};
+	
+	// Both methods on one curve and one type.
+	struct Comparison
+	{
+		Timing direct{};
+		Timing table{};
+		double buildSeconds{};      // best of kRuns builds of the BasisTable
+		double maxDifference{};     // largest |C_table(u) - C_direct(u)| over all u
 	};
 	
 	struct Options
@@ -106,14 +126,14 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// The timed loop: out[k] = C(params[k]). Returns the elapsed time in seconds.
-	template <std::floating_point T>
-	double evaluateAll(geom::NurbsCurve<T> const& curve, std::span<T const> params, std::span<geom::Point3<T>> out)
+	// The timed loop: out[k] = evaluate(params[k]). Returns the elapsed time in seconds.
+	template <std::floating_point T, typename Evaluate>
+	double evaluateAll(Evaluate const& evaluate, std::span<T const> params, std::span<geom::Point3<T>> out)
 	{
 		Clock::time_point const start = Clock::now();
 		for (std::size_t k = 0; k < params.size(); ++k)
 		{
-			out[k] = curve(params[k]);
+			out[k] = evaluate(params[k]);
 		}
 		Clock::time_point const stop = Clock::now();
 		return std::chrono::duration<double>(stop - start).count();
@@ -135,17 +155,14 @@ namespace
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	// One warm-up run, then kRuns timed runs.
-	template <std::floating_point T>
-	Timing timeEvaluation(int degree, std::size_t numKnots, std::size_t count)
+	template <std::floating_point T, typename Evaluate>
+	Timing timeMethod(Evaluate const& evaluate, std::span<T const> params, std::span<geom::Point3<T>> out)
 	{
-		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree, numKnots);
-		std::vector<T> const params = evenlySpacedParameters(curve, count);
-		std::vector<geom::Point3<T>> out(count);
-		evaluateAll<T>(curve, params, out);
+		evaluateAll<T>(evaluate, params, out);
 		std::vector<double> seconds{};
 		for (int run = 0; run < kRuns; ++run)
 		{
-			seconds.push_back(evaluateAll<T>(curve, params, out));
+			seconds.push_back(evaluateAll<T>(evaluate, params, out));
 		}
 		std::ranges::sort(seconds);
 		return {seconds.front(), seconds[seconds.size() / 2], checksum<T>(out)};
@@ -153,26 +170,118 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void printRow(std::string_view type, Timing const& timing, std::size_t count)
+	// The one-time cost of the table: best of kRuns builds.
+	template <std::floating_point T>
+	double timeTableBuild(geom::NurbsCurve<T> const& curve)
 	{
-		double const n = static_cast<double>(count);
-		double const nsPerPoint = timing.bestSeconds * 1e9 / n;
-		double const millionPerSecond = n / timing.bestSeconds / 1e6;
-		std::println("{:<8} {:>10.3f} {:>11.3f} {:>13.2f} {:>11.1f}   {:.6e}", type, timing.bestSeconds * 1e3, timing.medianSeconds * 1e3, nsPerPoint, millionPerSecond, timing.checksum);
+		double best = 0.0;
+		for (int run = 0; run < kRuns; ++run)
+		{
+			Clock::time_point const start = Clock::now();
+			geom::BasisTable<T> const table(curve);
+			double const seconds = std::chrono::duration<double>(Clock::now() - start).count();
+			best = (run == 0 || seconds < best) ? seconds : best;
+			checksumSink = checksumSink + static_cast<double>(table.coefficients().back());
+		}
+		return best;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The largest distance between corresponding points of a and b.
+	template <std::floating_point T>
+	double maxDistance(std::span<geom::Point3<T> const> a, std::span<geom::Point3<T> const> b)
+	{
+		double result = 0.0;
+		for (std::size_t k = 0; k < a.size(); ++k)
+		{
+			double const dx = static_cast<double>(a[k].x) - static_cast<double>(b[k].x);
+			double const dy = static_cast<double>(a[k].y) - static_cast<double>(b[k].y);
+			double const dz = static_cast<double>(a[k].z) - static_cast<double>(b[k].z);
+			result = std::max(result, std::sqrt(dx * dx + dy * dy + dz * dz));
+		}
+		return result;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Both methods on the same curve and parameters.
+	template <std::floating_point T>
+	Comparison compareMethods(int degree, std::size_t numKnots, std::size_t count)
+	{
+		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree, numKnots);
+		std::vector<T> const params = evenlySpacedParameters(curve, count);
+		std::vector<geom::Point3<T>> direct(count);
+		std::vector<geom::Point3<T>> fromTable(count);
+		double const buildSeconds = timeTableBuild(curve);
+		geom::BasisTable<T> const table(curve);
+		Timing const directTiming = timeMethod<T>([&curve](T u) { return curve(u); }, params, direct);
+		Timing const tableTiming = timeMethod<T>([&curve, &table](T u) { return geom::curvePointFromTable(curve, table, u); }, params, fromTable);
+		return {directTiming, tableTiming, buildSeconds, maxDistance<T>(direct, fromTable)};
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// 1000000 -> "1,000,000".
+	std::string withThousands(std::size_t value)
+	{
+		std::string digits = std::to_string(value);
+		for (std::size_t i = digits.size(); i > 3; i -= 3)
+		{
+			digits.insert(i - 3, ",");
+		}
+		return digits;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	void printHeader(std::size_t count, int degree, std::size_t numKnots)
 	{
-#ifdef NDEBUG
-		std::string_view const build = "Release";
-#else
-		std::string_view const build = "Debug (asserts on): timings are NOT representative";
+		auto const p = static_cast<std::size_t>(degree);
+		std::println("NURBS curve point evaluation (CPU, 1 thread)");
+#ifndef NDEBUG
+		std::println("WARNING: Debug build with asserts on, the timings are NOT representative");
 #endif
-		std::println("NURBS curve point evaluation, CPU, 1 thread ({} build)", build);
-		std::println("curve: degree {}, {} knots, {} control points, rational 3D spiral; N = {} points; best and median of {} runs", degree, numKnots, numKnots - static_cast<std::size_t>(degree) - 1, count, kRuns);
-		std::println("{:<8} {:>10} {:>11} {:>13} {:>11}   {}", "type", "best [ms]", "median [ms]", "per point [ns]", "Mpoints/s", "checksum");
+		std::println();
+		std::println("  curve   degree {}, {} knots, {} spans, {} control points (rational 3D spiral)", degree, withThousands(numKnots), withThousands(numKnots - 2 * p - 1), withThousands(numKnots - p - 1));
+		std::println("  points  {} evenly spaced parameters, best and median of {} runs", withThousands(count), kRuns);
+		std::println("  direct  every point: findSpan, basisFunctions (A2.2), weighted sum");
+		std::println("  table   basis polynomials of all spans computed once, then per point: findSpan, Horner, weighted sum");
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	void printRow(std::string_view method, Timing const& timing, std::size_t count)
+	{
+		double const n = static_cast<double>(count);
+		std::println("    {:<8}{:>10.2f}{:>13.2f}{:>16.2f}{:>12.1f}", method, timing.bestSeconds * 1e3, timing.medianSeconds * 1e3, timing.bestSeconds * 1e9 / n, n / timing.bestSeconds / 1e6);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// One block: the two methods, then the speedup, the table's one-time cost and the agreement.
+	template <std::floating_point T>
+	Comparison runComparison(std::string_view type, int degree, std::size_t numKnots, std::size_t count)
+	{
+		Comparison const c = compareMethods<T>(degree, numKnots, count);
+		auto const p = static_cast<std::size_t>(degree);
+		double const kilobytes = static_cast<double>((numKnots - 2 * p - 1) * ((p + 1) * (p + 1) + 1) * sizeof(T)) / 1024.0;
+		std::println();
+		std::println("  {:<10}{:>10}{:>13}{:>16}{:>12}", type, "best [ms]", "median [ms]", "per point [ns]", "Mpoints/s");
+		printRow("direct", c.direct, count);
+		printRow("table", c.table, count);
+		std::println("    table is {:.2f}x faster; built once in {:.3f} ms ({:.1f} KB); max |table - direct| = {:.1e}", c.direct.bestSeconds / c.table.bestSeconds, c.buildSeconds * 1e3, kilobytes, c.maxDifference);
+		return c;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The checksums only make sure the compiler cannot skip the work; direct and table should match.
+	void printChecksums(Comparison const& floats, Comparison const& doubles)
+	{
+		std::println();
+		std::println("  checksums  float  {:.6e} (direct)  {:.6e} (table)", floats.direct.checksum, floats.table.checksum);
+		std::println("             double {:.6e} (direct)  {:.6e} (table)", doubles.direct.checksum, doubles.table.checksum);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -262,7 +371,8 @@ int main(int argc, char* argv[])
 		writeCurveSvg(argv[0], degree, options.numKnots);
 	}
 	printHeader(options.count, degree, options.numKnots);
-	printRow("float", timeEvaluation<float>(degree, options.numKnots, options.count), options.count);
-	printRow("double", timeEvaluation<double>(degree, options.numKnots, options.count), options.count);
+	Comparison const floats = runComparison<float>("float", degree, options.numKnots, options.count);
+	Comparison const doubles = runComparison<double>("double", degree, options.numKnots, options.count);
+	printChecksums(floats, doubles);
 	return 0;
 }

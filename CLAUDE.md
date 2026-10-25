@@ -36,8 +36,9 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
 - Algorithms are free functions on spans, with no allocation or exceptions so they can move
   into kernels: `basis.hpp` (A2.1 `findSpan`, A2.2 `basisFunctions`), `curve_point.hpp`
   (A4.1 `curvePoint`, on raw data), `newton_raphson.hpp` (general 1D root finder for any `f`, `f'`),
-  `basis_polynomials.hpp` (a span's basis functions as polynomials in a local `t`, for precomputed
-  evaluation; work in progress, plan in its doc).
+  `basis_polynomials.hpp` (a span's basis functions as polynomials in a local `t`),
+  `basis_table.hpp` (`BasisTable`: those polynomials for every span, built once; `curvePointFromTable`
+  evaluates points from it, 1.2-2.5x faster than `curvePoint` on the CPU; plan in the doc).
   Each has a doc in `docs/algorithms/`.
   Functions callable from kernels are marked `GEOM_HD` (`host_device.hpp`). They may use
   `std::span`/`std::array` because `geom` adds `--expt-relaxed-constexpr` for `.cu` files.
