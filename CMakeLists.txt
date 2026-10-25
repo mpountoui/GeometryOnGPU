@@ -167,6 +167,7 @@ endfunction()
 geom_add_test(nurbs_curve)
 geom_add_test(basis)
 geom_add_test(curve_point)
+geom_add_test(basis_polynomials)
 geom_add_test(svg viz)
 geom_add_test(newton_raphson)
 
