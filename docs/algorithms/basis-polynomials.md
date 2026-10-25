@@ -9,10 +9,15 @@ parameter is cheaper than A2.1 + A2.2 + A4.1. The precomputation runs once per c
 
 ## Book reference
 
-- Chapter 6, *B-spline <-> power basis* conversion, book p.265 (PDF p.136). **Not read yet**
-  (the PDF is only on the dev Mac): read it and note here how the book's method (expected:
-  knot insertion to Bezier segments, then a Bezier-to-power matrix) compares with the direct
-  recurrence below.
+- Section 6.6, *Conversion Between B-spline and Piecewise Power Basis Forms*, book pp.265-270
+  (PDF pp.136-139). The book's method has three steps: (1) knot refinement (A5.4-A5.7) splits the
+  curve into Bezier segments; (2) each segment goes to the power basis with the matrix `M_p`,
+  `M_p(j,k) = (-1)^(j-k) C(p,k) C(p-k,j-k)` (Eq. 6.82, A6.1 `BezierToPowerMatrix`); (3) optionally
+  the polynomial is rewritten in `u` (Eqs. 6.84-6.85).
+  Comparison with our direct recurrence: the book's segment parameter `s` (Eq. 6.75,
+  `u = (u_{j+1} - u_j) s + u_j`) is exactly our `t`, so our table is the book's step-2 result
+  without the knot refinement; we skip step 3 on purpose (see *Local parameter*). On a Bezier
+  span our rows are the columns of `M_p` (the `p = 2` test equals Eq. 6.80).
 - The recurrence itself is Eq. (2.5), book p.50. Section 2.5 (pp.67-70) explains why only
   `p + 1` functions are nonzero on a span; see `basis-functions.md`.
 
@@ -38,7 +43,8 @@ The polynomials are written in a local parameter of the span, not in `u`:
 Expanding in powers of `u` is numerically bad: with knots far from 0 the coefficients become
 large with alternating signs and cancel (much worse in `float`). With only a shift `u - u_j`, the
 coefficients grow like `1 / h^d`, which with thousands of knots (`h ~ 1e-3`) and `p = 9` gets
-close to the `float` limit. With `t` in `[0, 1]` the coefficients stay of moderate size.
+close to the `float` limit. With `t` in `[0, 1]` the coefficients no longer depend on where the knots
+are, but they still grow with the degree (see *Precision*).
 
 Cost: one subtraction and one multiplication (store `1 / h_j`) per query.
 
@@ -72,6 +78,32 @@ they act as the zero entries `c_k` and `c[k]`. The GPU version uses two buffers 
 all threads of a level write at the same time.
 All `(k + 1)^2` outputs of a level are independent of each other, which is what the GPU
 parallelizes; the levels must run in order.
+
+## Precision
+
+Measured (scratch fuzz test, 2026-10-25): 20,000 random clamped knot vectors, `p = 1..9`, interior
+multiplicities up to `p`, about 100,000 spans, polynomials evaluated against A2.2:
+
+- `double`: largest difference 5e-13 over 3 million values; the coefficients of each span sum to
+  `1, 0, 0, ...` (partition of unity, coefficient-wise) within 6e-13. The method is correct.
+- `float`, spans of length >= 0.05, both methods given the same `float` `u`, error against `double` A2.2:
+
+  | p | 1 | 3 | 5 | 6 | 7 | 8 | 9 |
+  |---|---|---|---|---|---|---|---|
+  | power-basis table | 1.0e-6 | 2.7e-6 | 4.4e-6 | 1.3e-5 | 3.6e-5 | 1.1e-4 | 2.4e-4 |
+  | A2.2 | 9.6e-7 | 2.7e-6 | 4.2e-6 | 4.3e-6 | 5.2e-6 | 5.2e-6 | 6.5e-6 |
+
+  Up to `p = 5` the table is as accurate as A2.2; from `p = 6` it loses digits (40x at `p = 9`).
+- Cause: the power basis itself. Horner sums coefficients of alternating sign, so the rounding error is
+  about `epsilon * sum_d |c_d|`. On a Bezier span that sum is largest for `B_k`, `C(p,k) 2^(p-k)`:
+  12 for `p = 3`, 80 for `p = 5`, 5,376 for `p = 9` (exactly the maxima measured).
+- On very short spans (`h = 3e-6` in `[0, 1]`) both methods lose accuracy alike: rounding `u` to `float`
+  already moves `t` by about 2%. Not specific to the table.
+
+Consequence for the plan: in `float`, the power-basis table is fine for the usual `p <= 5`. For higher
+degrees, either use `double`, or store each span in Bezier (Bernstein) form instead, the output of the
+book's step 1, and evaluate it with a stable method (de Casteljau is `O(p^2)`; a Bernstein form of Horner
+is `O(p)`).
 
 ## Data layout
 
