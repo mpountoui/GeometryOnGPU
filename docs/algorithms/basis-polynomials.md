@@ -1,10 +1,11 @@
 # Precomputed span polynomials (basis and curve)
 
 Code: `src/geom/basis_polynomials.hpp` (one span's basis polynomials), `src/geom/basis_table.hpp`
-(the table for all spans, and evaluation from it). Next: the GPU kernel, and the curve table `A_j`.
-Tests: `tests/test_basis_polynomials.cpp` (against `basisFunctions`, A2.2) and
-`tests/test_basis_table.cpp` (points against `curvePoint`, A4.1).
-Benchmark: `bench_curve_point` times evaluation from the table against `curvePoint`.
+(the basis table for all spans, and evaluation from it), `src/geom/curve_table.hpp` (the curve
+table `A_j`, and evaluation from it). Next: the GPU kernels.
+Tests: `tests/test_basis_polynomials.cpp` (against `basisFunctions`, A2.2), `tests/test_basis_table.cpp`
+and `tests/test_curve_table.cpp` (points against `curvePoint`, A4.1).
+Benchmark: `bench_curve_point` times both tables against `curvePoint` (results in `docs/benchmarks.md`).
 
 Goal: precompute everything that does not depend on `u`, so that a later `C(u)` query at any
 parameter is cheaper than A2.1 + A2.2 + A4.1. The precomputation runs once per curve, on the GPU.
@@ -143,15 +144,29 @@ Work per point: binary search, `p (p + 1)` multiply-adds for the `N_r` (no divis
 weighted sum `4 (p + 1)`; A2.2 instead does `O(p^2)` work with `p (p + 1) / 2` divisions.
 Memory: `(p + 1)^2 + 1` values per span (17 for `p = 3`, 101 for `p = 9`).
 
-## Evaluation from a curve table (planned)
+## Evaluation from a curve table (implemented, CPU)
 
 Multiplying the basis table by the control points once gives the curve itself per span, so a
 point needs no basis functions at all:
 
+    A_j[d] = sum_r c(r, d) * Pw[j-p+r]          (built once, per span and power d)
     j = findSpan(u);  t = (u - u_j) * invH_j;  Cw = Horner(A_j, t);  C = Cw / w
 
-Work per point: binary search (same as now) plus `4p` multiply-adds, instead of A2.2 (`O(p^2)`,
-with divisions) plus the weighted sum `4(p + 1)`.
+`CurveTable<T>` (`curve_table.hpp`) stores per span the `p + 1` weighted points `A_j[0..p]` and `1 / h_j`
+(same row layout as `BasisTable`). It is built from a `BasisTable` and the weighted control points, or
+directly from a curve. `curvePointFromCurveTable` evaluates it (`GEOM_HD`, no allocation).
+Work per point: binary search plus `4p` multiply-adds, instead of A2.2 (`O(p^2)`, with divisions) plus
+the weighted sum `4(p + 1)`. Memory per span: `4(p + 1) + 1` values (17 for `p = 3`, same as the basis
+table; 41 for `p = 9`, against 101).
+
+Trade-off against the basis table: the curve table depends on the control points and weights, so it
+must be rebuilt when they change; the basis table depends only on the knots and degree, and can be
+shared by curves with the same knot vector. Measured on the CPU (docs/benchmarks.md) the curve table is
+2.7-3x faster than `curvePoint` at `p = 3` and about 15x at `p = 9`; its time per point barely depends
+on the degree. What remains is mostly the span search; `SpanLookup` (`docs/algorithms/span-lookup.md`)
+replaces it, for about 4 ns per point at any number of knots.
+
+## Running queries on the GPU (planned)
 
 Two ways to run queries, to be measured against each other (and against `curvePoint`):
 

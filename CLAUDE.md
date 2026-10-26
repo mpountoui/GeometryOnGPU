@@ -38,7 +38,11 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   (A4.1 `curvePoint`, on raw data), `newton_raphson.hpp` (general 1D root finder for any `f`, `f'`),
   `basis_polynomials.hpp` (a span's basis functions as polynomials in a local `t`),
   `basis_table.hpp` (`BasisTable`: those polynomials for every span, built once; `curvePointFromTable`
-  evaluates points from it, 1.2-2.5x faster than `curvePoint` on the CPU; plan in the doc).
+  evaluates points from it, 1.2-2.5x faster than `curvePoint` on the CPU), `curve_table.hpp`
+  (`CurveTable`: basis table times control points, the curve as one 4D polynomial per span;
+  `curvePointFromCurveTable`, 2.7-15x faster than `curvePoint`; rebuild when control points change),
+  `span_lookup.hpp` (`SpanLookup`: finds the span in O(1) with a cell table, same result as `findSpan`;
+  with the curve table about 4 ns per point independent of the number of knots).
   Each has a doc in `docs/algorithms/`.
   Functions callable from kernels are marked `GEOM_HD` (`host_device.hpp`). They may use
   `std::span`/`std::array` because `geom` adds `--expt-relaxed-constexpr` for `.cu` files.

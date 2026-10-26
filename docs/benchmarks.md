@@ -71,3 +71,67 @@ Observations:
   reaches radius 800, so 2.6e-4 is about 3e-7 relative) and with the degree (power-basis
   cancellation, see "Precision" in the algorithm doc).
 
+## Direct vs basis table vs curve table (`bench_curve_point`, since 2026-10-25)
+
+Third method **curve**: `CurveTable` holds per span the curve itself as a 4D polynomial in `t`
+(basis table times control points, built once); per point `findSpan`, one Horner evaluation of a
+4D polynomial, `C = Cw / w` (`curvePointFromCurveTable`). The curve table's build time includes
+building its basis table.
+
+### 2026-10-25, Apple M1 (1 core), Apple clang 21, `-O3 -DNDEBUG`, N = 1,000,000, ns per point
+
+| degree | knots | type | direct | basis table | curve table | curve vs direct | curve build | max diff (curve) |
+|---|---|---|---|---|---|---|---|---|
+| 3 | 104 | float  | 14.8 | 13.1 | 5.6 | 2.65x | 0.004 ms | 3.1e-6 |
+| 3 | 104 | double | 17.7 | 14.3 | 5.7 | 3.12x | 0.005 ms | 5.7e-15 |
+| 5 | 106 | float  | 39.2 | 21.5 | 6.2 | 6.27x | 0.010 ms | 3.9e-6 |
+| 5 | 106 | double | 42.6 | 22.8 | 6.3 | 6.81x | 0.009 ms | 6.0e-15 |
+| 9 | 110 | float  | 106.9 | 44.7 | 7.4 | 14.47x | 0.027 ms | 4.6e-6 |
+| 9 | 110 | double | 116.6 | 45.9 | 7.5 | 15.63x | 0.028 ms | 3.3e-14 |
+| 3 | 10,004 | float  | 17.6 | 17.4 | 10.0 | 1.75x | 0.42 ms | 3.3e-4 |
+| 3 | 10,004 | double | 19.6 | 18.7 | 10.1 | 1.94x | 0.43 ms | 5.4e-13 |
+
+Observations:
+
+- The curve table's time per point barely depends on the degree (5.6 ns at `p = 3`, 7.4 ns at `p = 9`):
+  only `4p` multiply-adds remain besides the span search. So its advantage grows with the degree,
+  to about 15x at `p = 9`.
+- With 10,000 knots it is still about 1.8-1.9x faster; the shared span search and the larger table
+  (0.7-1.3 MB, beyond the L1 cache) take a bigger share there.
+- Building it costs a little more than the basis table (one extra small matrix product per span) and
+  still pays off after a few hundred points.
+- In `float` at `p = 9` its error (4.6e-6) is smaller than the basis table's (2.6e-5): it does fewer
+  operations per point, so fewer roundings.
+
+## Curve table with a span lookup table (`bench_curve_point`, since 2026-10-26)
+
+Fourth method **lookup**: the curve table, with the span from a `SpanLookup` table (2 cells per span)
+instead of `findSpan`'s binary search (`curvePointFromTable(curve, table, lookup, u)`; see
+`docs/algorithms/span-lookup.md`). The build time shown is the lookup table's alone.
+
+### 2026-10-26, Apple M1 (1 core), Apple clang 21, `-O3 -DNDEBUG`, N = 1,000,000, ns per point (float / double)
+
+| degree | knots | direct | curve table | **curve table + lookup** | lookup vs direct | lookup build | lookup size |
+|---|---|---|---|---|---|---|---|
+| 3 | 104 | 14.9 / 17.7 | 5.6 / 5.7 | **3.9 / 4.0** | 3.9x / 4.5x | 0.2 us | 0.8 KB |
+| 9 | 110 | 107.1 / 116.8 | 7.4 / 7.4 | **7.0 / 7.0** | 15.2x / 16.7x | 0.2 us | 0.7 KB |
+| 3 | 10,004 | 17.6 / 19.5 | 10.0 / 10.1 | **3.9 / 4.0** | 4.6x / 4.9x | 20 us | 78 KB |
+| 3 | 100,004 | 21.2 / 22.3 | 16.0 / 17.0 | **3.9 / 4.0** | 5.4x / 5.6x | 193 us | 781 KB |
+
+Observations:
+
+- With the lookup the time per point no longer depends on the number of knots: 3.9-4.0 ns from 100 to
+  100,000 control points, while the binary search grows from 5.6 to 16 ns. The gain over the curve
+  table is 1.45x with 100 knots, 2.6x with 10,000 and 4.1x with 100,000.
+- At `p = 9` the gain is small (7.4 -> 7.0 ns): there the 4D Horner, not the span search, dominates.
+- A rough estimate (2026-10-26) predicted about 2.4 ns per point; that used a bare `floor` formula for
+  uniform knots. The real lookup also checks the domain ends, loads its table and walks over the knots,
+  about 1.5 ns more, and in return works for any knot vector.
+- Building the lookup is cheap: one pass over cells and knots, 193 us for 100,000 knots (a first version
+  with one `findSpan` per cell took 7.1 ms, more than the curve table itself).
+- Total precomputation (what must be built before the first point; the benchmark prints it, with the
+  memory and the break-even point): basis = basis table; curve = curve table (its basis table inside);
+  lookup = curve table + lookup table. With 10,000 knots, `p = 3`, `float`: basis 332 us, curve 416 us,
+  lookup 435 us; they pay for themselves after 1.26 million, 54,000 and 32,000 points. So the lookup
+  costs the most to prepare but pays off soonest, because it saves the most per point.
+

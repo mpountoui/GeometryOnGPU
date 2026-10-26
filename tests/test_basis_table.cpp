@@ -1,9 +1,9 @@
-#include <cmath>
 #include <cstddef>
 #include <numbers>
 #include <vector>
 
 #include "check.hpp"
+#include "test_curves.hpp"
 #include "geom/basis_polynomials.hpp"
 #include "geom/basis_table.hpp"
 #include "geom/nurbs_curve.hpp"
@@ -16,45 +16,10 @@ namespace
 {
 	using Points = std::vector<Point3<double>>;
 	using Values = std::vector<double>;
+	using test::nearPoint;
+	using test::rationalCurve;
 	
 	constexpr double kTol = 1e-12;
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	template <typename T>
-	bool nearPoint(Point3<T> const& a, Point3<T> const& b, T tolerance)
-	{
-		return test::near(a.x, b.x, tolerance) && test::near(a.y, b.y, tolerance) && test::near(a.z, b.z, tolerance);
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// Points on a spiral, enough for any knot vector with numPoints control points.
-	template <typename T>
-	std::vector<Point3<T>> spiralPoints(std::size_t numPoints)
-	{
-		std::vector<Point3<T>> points{};
-		for (std::size_t i = 0; i < numPoints; ++i)
-		{
-			double const a = 0.4 * static_cast<double>(i);
-			points.push_back({static_cast<T>(std::cos(a) * (1.0 + 0.1 * a)), static_cast<T>(std::sin(a) * (1.0 + 0.1 * a)), static_cast<T>(0.05 * a)});
-		}
-		return points;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// Weights between 0.5 and 1.5, so the curve is rational.
-	template <typename T>
-	std::vector<T> wavyWeights(std::size_t numPoints)
-	{
-		std::vector<T> weights{};
-		for (std::size_t i = 0; i < numPoints; ++i)
-		{
-			weights.push_back(static_cast<T>(1.0 + 0.5 * std::sin(0.7 * static_cast<double>(i))));
-		}
-		return weights;
-	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
@@ -69,16 +34,6 @@ namespace
 			T const u = (k == 1000) ? b : a + (b - a) * static_cast<T>(k) / T{1000};
 			CHECK(nearPoint(geom::curvePointFromTable(curve, table, u), curve(u), tolerance));
 		}
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// A rational curve on knots with numPoints control points.
-	template <typename T>
-	NurbsCurve<T> rationalCurve(int degree, std::vector<T> const& knots)
-	{
-		std::size_t const numPoints = knots.size() - static_cast<std::size_t>(degree) - 1;
-		return NurbsCurve<T>(degree, knots, spiralPoints<T>(numPoints), wavyWeights<T>(numPoints));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -142,13 +97,7 @@ namespace
 	{
 		for (int p = 1; p <= geom::kMaxDegree; ++p)
 		{
-			Values knots(static_cast<std::size_t>(p) + 1, 0.0);
-			for (int k = 1; k <= 12; ++k)
-			{
-				knots.push_back(k / 13.0);
-			}
-			knots.insert(knots.end(), static_cast<std::size_t>(p) + 1, 1.0);
-			checkAgainstCurve(rationalCurve(p, knots), 1e-10);
+			checkAgainstCurve(rationalCurve(p, test::uniformKnots<double>(p, 12)), 1e-10);
 		}
 		checkAgainstCurve(rationalCurve<double>(2, {0, 0, 0, 1, 2, 3, 4, 4, 5, 5, 5}), kTol);
 		checkAgainstCurve(rationalCurve<double>(3, {0, 0, 0, 0, 0.5, 0.5, 0.5, 1, 1, 1, 1}), kTol);

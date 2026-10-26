@@ -4,6 +4,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <print>
 #include <span>
@@ -13,16 +14,21 @@
 #include <vector>
 
 #include "geom/basis_table.hpp"
+#include "geom/curve_table.hpp"
 #include "geom/nurbs_curve.hpp"
+#include "geom/span_lookup.hpp"
 #include "viz/svg_document.hpp"
 
-// Benchmark: evaluate N points C(u) on a NURBS curve on the CPU (one thread) and time it, with two
+// Benchmark: evaluate N points C(u) on a NURBS curve on the CPU (one thread) and time it, with four
 // methods:
 //   direct  everything per point: findSpan (A2.1), basisFunctions (A2.2), weighted sum (A4.1);
-//   table   the basis polynomials of every span are computed once (BasisTable); per point only
-//           findSpan, Horner on the span's p + 1 polynomials, and the same weighted sum.
-// The table's one-time build is timed separately, and the largest distance between the two
-// methods' points is printed as a check that they agree.
+//   basis   the basis polynomials of every span are computed once (BasisTable); per point
+//           findSpan, Horner on the span's p + 1 polynomials, and the same weighted sum;
+//   curve   basis polynomials times control points, i.e. the curve itself per span, computed once
+//           (CurveTable); per point findSpan and one Horner evaluation of a 4D polynomial;
+//   lookup  the curve table, with the span from a SpanLookup table instead of findSpan's binary search.
+// The tables' one-time builds are timed separately, and the largest distance between each table
+// method's points and the direct ones is printed as a check that they agree.
 //
 //   bench_curve_point [N] [degree] [--knots K] [--svg]      defaults: N = 1000000, degree = 3
 //
@@ -31,7 +37,7 @@
 // --svg also saves a picture of the benchmark curve (xy projection) to svg/benchmark_curve.svg
 // next to the executable.
 //
-// Only the evaluation loops are timed: the curve, the parameters, the table and the output arrays
+// Only the evaluation loops are timed: the curve, the parameters, the tables and the output arrays
 // are set up before. One warm-up run, then the best and the median of kRuns runs. The checksum is printed
 // so the compiler cannot skip the work, and it lets float and double results be compared.
 
@@ -52,13 +58,19 @@ namespace
 		double checksum{};
 	};
 	
-	// Both methods on one curve and one type.
+	// The four methods on one curve and one type.
 	struct Comparison
 	{
 		Timing direct{};
-		Timing table{};
-		double buildSeconds{};      // best of kRuns builds of the BasisTable
-		double maxDifference{};     // largest |C_table(u) - C_direct(u)| over all u
+		Timing basis{};
+		Timing curve{};
+		Timing lookup{};
+		double basisBuildSeconds{};     // best of kRuns builds of the BasisTable
+		double curveBuildSeconds{};     // best of kRuns builds of the CurveTable (its BasisTable included)
+		double lookupBuildSeconds{};    // best of kRuns builds of the SpanLookup alone
+		double basisDifference{};       // largest |C_basis(u) - C_direct(u)| over all u
+		double curveDifference{};       // largest |C_curve(u) - C_direct(u)| over all u
+		double lookupDifference{};      // largest |C_lookup(u) - C_direct(u)| over all u
 	};
 	
 	struct Options
@@ -170,18 +182,43 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// The one-time cost of the table: best of kRuns builds.
+	// A value that depends on the whole build, so the compiler cannot drop the builds timeBuild times.
 	template <std::floating_point T>
-	double timeTableBuild(geom::NurbsCurve<T> const& curve)
+	double sinkValue(geom::BasisTable<T> const& table)
+	{
+		return static_cast<double>(table.inverseSpanLengths().back());
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	double sinkValue(geom::CurveTable<T> const& table)
+	{
+		return static_cast<double>(table.inverseSpanLengths().back());
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	double sinkValue(geom::SpanLookup<T> const& lookup)
+	{
+		return static_cast<double>(lookup.firstSpans().back());
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The one-time cost of a table (BasisTable, CurveTable or SpanLookup) built from the curve: best of kRuns builds.
+	template <typename Table, std::floating_point T>
+	double timeBuild(geom::NurbsCurve<T> const& curve)
 	{
 		double best = 0.0;
 		for (int run = 0; run < kRuns; ++run)
 		{
 			Clock::time_point const start = Clock::now();
-			geom::BasisTable<T> const table(curve);
+			Table const table(curve);
 			double const seconds = std::chrono::duration<double>(Clock::now() - start).count();
 			best = (run == 0 || seconds < best) ? seconds : best;
-			checksumSink = checksumSink + static_cast<double>(table.coefficients().back());
+			checksumSink = checksumSink + sinkValue(table);
 		}
 		return best;
 	}
@@ -205,19 +242,37 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Both methods on the same curve and parameters.
+	// The one-time build costs of the three tables.
+	template <std::floating_point T>
+	void timeBuilds(geom::NurbsCurve<T> const& curve, Comparison& c)
+	{
+		c.basisBuildSeconds = timeBuild<geom::BasisTable<T>>(curve);
+		c.curveBuildSeconds = timeBuild<geom::CurveTable<T>>(curve);
+		c.lookupBuildSeconds = timeBuild<geom::SpanLookup<T>>(curve);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The four methods on the same curve and parameters; out[0] holds the direct points.
 	template <std::floating_point T>
 	Comparison compareMethods(int degree, std::size_t numKnots, std::size_t count)
 	{
 		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree, numKnots);
 		std::vector<T> const params = evenlySpacedParameters(curve, count);
-		std::vector<geom::Point3<T>> direct(count);
-		std::vector<geom::Point3<T>> fromTable(count);
-		double const buildSeconds = timeTableBuild(curve);
-		geom::BasisTable<T> const table(curve);
-		Timing const directTiming = timeMethod<T>([&curve](T u) { return curve(u); }, params, direct);
-		Timing const tableTiming = timeMethod<T>([&curve, &table](T u) { return geom::curvePointFromTable(curve, table, u); }, params, fromTable);
-		return {directTiming, tableTiming, buildSeconds, maxDistance<T>(direct, fromTable)};
+		std::vector<std::vector<geom::Point3<T>>> out(4, std::vector<geom::Point3<T>>(count));
+		geom::BasisTable<T> const basis(curve);
+		geom::CurveTable<T> const table(curve);
+		geom::SpanLookup<T> const lookup(curve);
+		Comparison c{};
+		c.direct = timeMethod<T>([&curve](T u) { return curve(u); }, params, out[0]);
+		c.basis = timeMethod<T>([&curve, &basis](T u) { return geom::curvePointFromTable(curve, basis, u); }, params, out[1]);
+		c.curve = timeMethod<T>([&curve, &table](T u) { return geom::curvePointFromTable(curve, table, u); }, params, out[2]);
+		c.lookup = timeMethod<T>([&curve, &table, &lookup](T u) { return geom::curvePointFromTable(curve, table, lookup, u); }, params, out[3]);
+		timeBuilds(curve, c);
+		c.basisDifference = maxDistance<T>(out[0], out[1]);
+		c.curveDifference = maxDistance<T>(out[0], out[2]);
+		c.lookupDifference = maxDistance<T>(out[0], out[3]);
+		return c;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -246,7 +301,9 @@ namespace
 		std::println("  curve   degree {}, {} knots, {} spans, {} control points (rational 3D spiral)", degree, withThousands(numKnots), withThousands(numKnots - 2 * p - 1), withThousands(numKnots - p - 1));
 		std::println("  points  {} evenly spaced parameters, best and median of {} runs", withThousands(count), kRuns);
 		std::println("  direct  every point: findSpan, basisFunctions (A2.2), weighted sum");
-		std::println("  table   basis polynomials of all spans computed once, then per point: findSpan, Horner, weighted sum");
+		std::println("  basis   basis polynomials of all spans computed once; per point: findSpan, Horner per basis function, weighted sum");
+		std::println("  curve   basis x control points (the curve per span) computed once; per point: findSpan, one 4D Horner");
+		std::println("  lookup  curve table, with the span from a lookup table instead of the binary search");
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -259,29 +316,74 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// One block: the two methods, then the speedup, the table's one-time cost and the agreement.
+	// The precomputation of one method, everything built before the first point.
+	struct Precomputation
+	{
+		std::string_view name{};
+		Timing evaluation{};
+		double seconds{};       // total build time
+		double kilobytes{};     // total memory
+		double difference{};    // largest |C_method(u) - C_direct(u)|
+	};
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// After how many points the precomputation has paid for itself: total build time / time saved per
+	// point ("never" if the method is not faster than direct).
+	std::string paysOffAfter(Timing const& direct, Precomputation const& method, std::size_t count)
+	{
+		double const savedPerPoint = (direct.bestSeconds - method.evaluation.bestSeconds) / static_cast<double>(count);
+		if (!(savedPerPoint > 0.0))
+		{
+			return "never";
+		}
+		return withThousands(static_cast<std::size_t>(std::ceil(method.seconds / savedPerPoint))) + " points";
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// One row of the precomputation table: speedup, total build time and memory, break-even, agreement.
+	void printPrecomputation(Timing const& direct, Precomputation const& method, std::size_t count)
+	{
+		double const speedup = direct.bestSeconds / method.evaluation.bestSeconds;
+		std::println("    {:<9}{:>8.2f}x{:>13.1f}{:>13.1f}{:>20}{:>13.1e}", method.name, speedup, method.seconds * 1e6, method.kilobytes, paysOffAfter(direct, method, count), method.difference);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// One block: the four methods, then the precomputation of each table method. Totals: basis = the
+	// basis table; curve = the curve table (it builds its basis table inside); lookup = the curve table
+	// plus the lookup table.
 	template <std::floating_point T>
 	Comparison runComparison(std::string_view type, int degree, std::size_t numKnots, std::size_t count)
 	{
 		Comparison const c = compareMethods<T>(degree, numKnots, count);
 		auto const p = static_cast<std::size_t>(degree);
-		double const kilobytes = static_cast<double>((numKnots - 2 * p - 1) * ((p + 1) * (p + 1) + 1) * sizeof(T)) / 1024.0;
+		std::size_t const numSpans = numKnots - 2 * p - 1;
+		double const basisKilobytes = static_cast<double>(numSpans * ((p + 1) * (p + 1) + 1) * sizeof(T)) / 1024.0;
+		double const curveKilobytes = static_cast<double>(numSpans * (4 * (p + 1) + 1) * sizeof(T)) / 1024.0;
+		double const lookupKilobytes = static_cast<double>(2 * numSpans * sizeof(std::uint32_t)) / 1024.0;
 		std::println();
 		std::println("  {:<10}{:>10}{:>13}{:>16}{:>12}", type, "best [ms]", "median [ms]", "per point [ns]", "Mpoints/s");
 		printRow("direct", c.direct, count);
-		printRow("table", c.table, count);
-		std::println("    table is {:.2f}x faster; built once in {:.3f} ms ({:.1f} KB); max |table - direct| = {:.1e}", c.direct.bestSeconds / c.table.bestSeconds, c.buildSeconds * 1e3, kilobytes, c.maxDifference);
+		printRow("basis", c.basis, count);
+		printRow("curve", c.curve, count);
+		printRow("lookup", c.lookup, count);
+		std::println("    {:<9}{:>9}{:>13}{:>13}{:>20}{:>13}", "", "speedup", "precomp [us]", "memory [KB]", "pays off after", "max diff");
+		printPrecomputation(c.direct, {"basis", c.basis, c.basisBuildSeconds, basisKilobytes, c.basisDifference}, count);
+		printPrecomputation(c.direct, {"curve", c.curve, c.curveBuildSeconds, curveKilobytes, c.curveDifference}, count);
+		printPrecomputation(c.direct, {"lookup", c.lookup, c.curveBuildSeconds + c.lookupBuildSeconds, curveKilobytes + lookupKilobytes, c.lookupDifference}, count);
 		return c;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// The checksums only make sure the compiler cannot skip the work; direct and table should match.
+	// The checksums only make sure the compiler cannot skip the work; all four should match.
 	void printChecksums(Comparison const& floats, Comparison const& doubles)
 	{
 		std::println();
-		std::println("  checksums  float  {:.6e} (direct)  {:.6e} (table)", floats.direct.checksum, floats.table.checksum);
-		std::println("             double {:.6e} (direct)  {:.6e} (table)", doubles.direct.checksum, doubles.table.checksum);
+		std::println("  checksums  float  {:.6e} (direct)  {:.6e} (basis)  {:.6e} (curve)  {:.6e} (lookup)", floats.direct.checksum, floats.basis.checksum, floats.curve.checksum, floats.lookup.checksum);
+		std::println("             double {:.6e} (direct)  {:.6e} (basis)  {:.6e} (curve)  {:.6e} (lookup)", doubles.direct.checksum, doubles.basis.checksum, doubles.curve.checksum, doubles.lookup.checksum);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

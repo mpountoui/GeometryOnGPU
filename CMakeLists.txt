@@ -169,6 +169,8 @@ geom_add_test(basis)
 geom_add_test(curve_point)
 geom_add_test(basis_polynomials)
 geom_add_test(basis_table)
+geom_add_test(curve_table)
+geom_add_test(span_lookup)
 geom_add_test(svg viz)
 geom_add_test(newton_raphson)
 
