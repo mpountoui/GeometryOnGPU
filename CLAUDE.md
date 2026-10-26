@@ -12,7 +12,8 @@ CMake (>= 3.24). CUDA is optional: without a CUDA compiler the project builds CP
 Tests and benchmarks use `<print>`, so the host compiler must be GCC >= 14 (or a recent Clang/libc++);
 on the NVIDIA Linux boxes (Ubuntu 24.04, default GCC 13) install `g++-14` and configure with
 `-DCMAKE_CXX_COMPILER=g++-14` (a fresh build dir: CMake caches the compiler).
-Both boxes have nvcc 12.8. The RTX A4000 box (sm_86) works with `native`. The B300 box (sm_103) does not,
+All boxes have nvcc 12.8. The RTX A4000 (sm_86) and RTX 2000 Ada (sm_89) boxes work with `native`.
+The B300 box (sm_103) does not,
 because nvcc 12.8 does not know sm_103: there also pass `-DCMAKE_CUDA_ARCHITECTURES=100`
 (sm_100 code runs on sm_103). Drop this once CUDA is >= 12.9.
 The dev Mac (Apple Silicon) has no `nvcc`, so CUDA code can only be built and run on an NVIDIA machine.
@@ -156,4 +157,6 @@ Record each with its reason, for example: "Kernel X assumes sorted input because
   book pages. The PDF is a scan: read it as page images, a few pages per request.
 - `docs/`: design notes, algorithm choices, benchmark results (create when needed).
   One file per algorithm in `docs/algorithms/`, written before or while implementing it.
+  `docs/gpu-plan.md`: the step-by-step plan (and way of working) for moving the precomputation to
+  the GPU; read it first when continuing that work, and update its status as steps finish.
 - `.claude/skills/`: repeatable workflows, added once a task has been done by hand twice.
