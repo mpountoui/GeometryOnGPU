@@ -111,7 +111,7 @@ namespace
 	{
 		NurbsCurve<double> const curve = rationalCurve(3, test::uniformKnots<double>(3, 5));
 		CurveTable const direct(curve);
-		CurveTable const fromBasis(BasisTable(curve), curve.weightedControlPoints());
+		CurveTable const fromBasis(BasisTable<double>(curve),curve.weightedControlPoints());
 		std::span<Point4<double> const> const a = direct.coefficients();
 		std::span<Point4<double> const> const b = fromBasis.coefficients();
 		CHECK(std::vector<Point4<double>>(a.begin(), a.end()) == std::vector<Point4<double>>(b.begin(), b.end()));
