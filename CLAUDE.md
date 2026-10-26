@@ -56,8 +56,14 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
 - `src/gpu/`: host-side CUDA helpers, the `gpu` static library (only built with CUDA):
   `checkCuda`/`checkLaunch` (`cuda_check.hpp/.cpp`, throw `std::runtime_error`) and the
   move-only RAII `DeviceBuffer<T>` (`device_buffer.hpp`, synchronous `upload`/`download`).
+  Kernels live here too: `basis_table_gpu.hpp/.cu` builds a `BasisTable` on the GPU
+  (`buildBasisTableOnDevice`, one thread per span, result kept in device memory as `DeviceBasisTable`).
+  Pattern: the `.hpp` declares a host function with no CUDA syntax (so `.cpp` files can call it),
+  the `.cu` holds the kernel and explicitly instantiates `float` and `double`. Kernels call the same
+  `GEOM_HD` per-item functions as the CPU code (e.g. `detail::buildBasisRow`), so the two cannot drift.
 
-TODO: host/device data flow, once the first kernel exists. Longer notes go in `docs/`.
+Host/device data flow: inputs are uploaded once by the caller (the builders take `DeviceBuffer`s)
+and results stay on the device until a test or user downloads them. Longer notes go in `docs/`.
 
 ## Conventions
 
@@ -149,6 +155,12 @@ Record each with its reason, for example: "Kernel X assumes sorted input because
 - Degree is capped at `kMaxDegree` (9, in `basis.hpp`) and `NurbsCurve` rejects higher degrees:
   evaluation keeps the p+1 basis values in a fixed-size local array (registers on the GPU).
   Raise the constant if a higher degree is ever needed.
+- GPU results are not bit-identical to the CPU: nvcc fuses `a * b + c` into FMA, g++ on x86-64 does not.
+  GPU tests compare with an ulp tolerance (`--fmad=false` makes them identical, useful to check that
+  FMA is the only cause). `cudaMalloc` memory is not zeroed, so kernels write every output value, and
+  GPU tests fill freed device memory with NaN first so a missed write fails (`test_basis_table_gpu.cpp`).
+- `.cu` files get `-Wall -Wextra` but not `-Wpedantic`: nvcc forwards it to the host compiler, which then
+  warns about every line marker in nvcc's generated code.
 
 ## Where things live
 

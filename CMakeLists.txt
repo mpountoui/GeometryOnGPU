@@ -78,7 +78,9 @@ function(geom_enable_warnings target)
 	if(MSVC)
 		target_compile_options(${target} PRIVATE /W4)
 	else()
-		target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+		# .cu files: nvcc forwards these to the host compiler, which with -Wpedantic would warn about
+		# every "# 1 file" line marker in nvcc's generated C++ (noise, not our code), so drop it there.
+		target_compile_options(${target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>" "$<$<COMPILE_LANGUAGE:CUDA>:-Wall;-Wextra>")
 	endif()
 endfunction()
 
@@ -110,7 +112,7 @@ geom_enable_warnings(viz)
 # template). PUBLIC CUDA::cudart: whatever links "gpu" can include <cuda_runtime.h> and call
 # the CUDA runtime too.
 if(GEOM_HAS_CUDA)
-	add_library(gpu STATIC src/gpu/cuda_check.cpp)
+	add_library(gpu STATIC src/gpu/cuda_check.cpp src/gpu/basis_table_gpu.cu)
 	target_compile_features(gpu PRIVATE cxx_std_23)
 	target_include_directories(gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 	target_link_libraries(gpu PUBLIC geom CUDA::cudart)
@@ -177,4 +179,5 @@ geom_add_test(newton_raphson)
 # Tests that need CUDA (and a GPU to run on).
 if(GEOM_HAS_CUDA)
 	geom_add_test(device_buffer gpu)
+	geom_add_test(basis_table_gpu gpu)
 endif()
