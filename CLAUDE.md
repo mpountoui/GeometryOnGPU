@@ -25,7 +25,8 @@ cmake --build build                  # build
 ./build/geometry_on_gpu --svg [dir]  # write demo curve images (default: build/svg/)
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
-./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # benchmark (Release build); results in docs/benchmarks.md
+./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # benchmark (Release build; with CUDA also the GPU
+                                                             # basis table build); results in docs/benchmarks.md
 ```
 
 ## Architecture
@@ -55,9 +56,11 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   steps. Never include `viz` headers from `.cu` files.
 - `src/gpu/`: host-side CUDA helpers, the `gpu` static library (only built with CUDA):
   `checkCuda`/`checkLaunch` (`cuda_check.hpp/.cpp`, throw `std::runtime_error`) and the
-  move-only RAII `DeviceBuffer<T>` (`device_buffer.hpp`, synchronous `upload`/`download`).
+  move-only RAII `DeviceBuffer<T>` (`device_buffer.hpp`, synchronous `upload`/`download`) and
+  `CudaEvent` (`cuda_event.hpp/.cpp`, GPU-side timing with `elapsedSeconds`).
   Kernels live here too: `basis_table_gpu.hpp/.cu` builds a `BasisTable` on the GPU
-  (`buildBasisTableOnDevice`, one thread per span, result kept in device memory as `DeviceBasisTable`).
+  (`allocateBasisTableOnDevice` + `fillBasisTableOnDevice` (launch only, so it can be timed and reuse a
+  table) = `buildBasisTableOnDevice`; one thread per span; result kept in device memory as `DeviceBasisTable`).
   Pattern: the `.hpp` declares a host function with no CUDA syntax (so `.cpp` files can call it),
   the `.cu` holds the kernel and explicitly instantiates `float` and `double`. Kernels call the same
   `GEOM_HD` per-item functions as the CPU code (e.g. `detail::buildBasisRow`), so the two cannot drift.

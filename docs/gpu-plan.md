@@ -15,7 +15,8 @@ Update the status column when a step is done, and record agreed decisions below.
 |---|---|---|---|
 | 0 | g++-14, clean build, ctest, CPU benchmark on the RTX 2000 Ada box | Toolchain | done 2026-10-26 |
 | 1 | Basis table kernel, one thread per span; test GPU == CPU `BasisTable` | `__global__`, `.cu` in CMake, thread indexing, `DeviceBuffer` | done 2026-10-26 |
-| 1b | GPU basis table build in `bench_curve_point`: kernel only (CUDA events), build, end to end, first call | Asynchronous launches, CUDA events, warm-up | agreed, next |
+| 1b | GPU basis table build in `bench_curve_point`: kernel only (CUDA events), build, end to end, first call | Asynchronous launches, CUDA events, warm-up | done 2026-10-26 |
+| 1c | Profile the basis table kernel with `ncu`: confirm why it is ~10x slower than its memory limit | Nsight Compute, memory throughput, coalescing | next |
 | 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | |
 | 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | |
 | 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | |
@@ -58,7 +59,7 @@ Findings (2026-10-26, RTX 2000 Ada):
   freed device memory with NaN first (`dirtyDeviceMemory`); without the zero writes the GPU test fails
   while the CPU test still passes (`std::vector` zeroes its memory).
 
-## Step 1b: agreed decisions
+## Step 1b: agreed decisions (implemented)
 
 - New section in `bench_curve_point`, float and double, best of 5 after a warm-up, speedup and max diff
   against the CPU `BasisTable`: CPU 1 thread; GPU kernel only (CUDA events); GPU build
@@ -67,3 +68,8 @@ Findings (2026-10-26, RTX 2000 Ada):
 - `gpu::CudaEvent`: move-only RAII wrapper for `cudaEvent_t`, in `src/gpu/`.
 - The GPU part is under `#ifdef GEOM_HAS_CUDA`; the benchmark links `gpu` only with CUDA.
 - `cudaMalloc` stays inside the timed build for now; revisit if it dominates.
+- Changed while implementing: events around `buildBasisTableOnDevice` would also measure the CPU-side
+  `cudaMalloc` (the GPU sits idle between the events), so the host function is split into
+  `allocateBasisTableOnDevice` and `fillBasisTableOnDevice` (launch only); `build` = both.
+- Results in `docs/benchmarks.md`: from ~10k spans the kernel is 11-14x faster than one CPU core, but
+  ~10x slower than its memory limit (memory-access bound, see there); copies dominate end to end.

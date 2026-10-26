@@ -108,11 +108,11 @@ target_link_libraries(viz PUBLIC geom)
 geom_enable_warnings(viz)
 
 # ---- The GPU helper library (only with CUDA) ----------------------------------------------
-# Host-side CUDA helpers: error checking (cuda_check) and the RAII DeviceBuffer<T> (header-only
-# template). PUBLIC CUDA::cudart: whatever links "gpu" can include <cuda_runtime.h> and call
-# the CUDA runtime too.
+# Host-side CUDA helpers: error checking (cuda_check), the RAII DeviceBuffer<T> (header-only
+# template) and CudaEvent (GPU timing); and the kernels (.cu files, compiled by nvcc).
+# PUBLIC CUDA::cudart: whatever links "gpu" can include <cuda_runtime.h> and call the CUDA runtime too.
 if(GEOM_HAS_CUDA)
-	add_library(gpu STATIC src/gpu/cuda_check.cpp src/gpu/basis_table_gpu.cu)
+	add_library(gpu STATIC src/gpu/cuda_check.cpp src/gpu/cuda_event.cpp src/gpu/basis_table_gpu.cu)
 	target_compile_features(gpu PRIVATE cxx_std_23)
 	target_include_directories(gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 	target_link_libraries(gpu PUBLIC geom CUDA::cudart)
@@ -149,6 +149,12 @@ target_compile_features(bench_curve_point PRIVATE cxx_std_23)
 target_link_libraries(bench_curve_point PRIVATE geom viz)
 geom_enable_warnings(bench_curve_point)
 
+# With CUDA the benchmark also times the GPU builds (its "#ifdef GEOM_HAS_CUDA" parts).
+if(GEOM_HAS_CUDA)
+	target_compile_definitions(bench_curve_point PRIVATE GEOM_HAS_CUDA=1)
+	target_link_libraries(bench_curve_point PRIVATE gpu)
+endif()
+
 # ---- Tests -------------------------------------------------------------------------------
 # enable_testing() turns on CTest, CMake's test runner. add_test registers a program as a
 # test; it passes if the program exits with 0. Run all tests with:
@@ -180,4 +186,5 @@ geom_add_test(newton_raphson)
 if(GEOM_HAS_CUDA)
 	geom_add_test(device_buffer gpu)
 	geom_add_test(basis_table_gpu gpu)
+	geom_add_test(cuda_event gpu)
 endif()

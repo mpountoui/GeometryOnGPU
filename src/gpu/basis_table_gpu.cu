@@ -1,6 +1,7 @@
 #include "gpu/basis_table_gpu.hpp"
 
 #include <span>
+#include <stdexcept>
 
 #include "geom/basis_table.hpp"
 #include "gpu/cuda_check.hpp"
@@ -30,22 +31,49 @@ namespace gpu
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// numSpans = n + 1 - p with n = numKnots - p - 2.
+	template <std::floating_point T>
+	DeviceBasisTable<T> allocateBasisTableOnDevice(int degree, std::size_t numKnots)
+	{
+		auto const p = static_cast<std::size_t>(degree);
+		std::size_t const numSpans = numKnots - 2 * p - 1;
+		return {degree, numSpans, DeviceBuffer<T>(numSpans * (p + 1) * (p + 1)), DeviceBuffer<T>(numSpans)};
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	// Enough blocks to give every row a thread: ceil(numSpans / kThreadsPerBlock).
+	template <std::floating_point T>
+	void fillBasisTableOnDevice(DeviceBuffer<T> const& knots, DeviceBasisTable<T>& table)
+	{
+		auto const p = static_cast<std::size_t>(table.degree);
+		std::size_t const numSpans = table.numSpans;
+		if (knots.size() != numSpans + 2 * p + 1 || table.coefficients.size() != numSpans * (p + 1) * (p + 1) || table.inverseSpanLengths.size() != numSpans)
+		{
+			throw std::invalid_argument("fillBasisTableOnDevice: table allocated for a different number of knots");
+		}
+		auto const blocks = static_cast<unsigned int>((numSpans + kThreadsPerBlock - 1) / kThreadsPerBlock);
+		basisTableKernel<T><<<blocks, kThreadsPerBlock>>>(table.degree, knots.data(), knots.size(), numSpans, table.coefficients.data(), table.inverseSpanLengths.data());
+		checkLaunch();
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	template <std::floating_point T>
 	DeviceBasisTable<T> buildBasisTableOnDevice(int degree, DeviceBuffer<T> const& knots)
 	{
-		auto const p = static_cast<std::size_t>(degree);
-		std::size_t const numSpans = knots.size() - 2 * p - 1;
-		DeviceBasisTable<T> table{degree, numSpans, DeviceBuffer<T>(numSpans * (p + 1) * (p + 1)), DeviceBuffer<T>(numSpans)};
-		auto const blocks = static_cast<unsigned int>((numSpans + kThreadsPerBlock - 1) / kThreadsPerBlock);
-		basisTableKernel<T><<<blocks, kThreadsPerBlock>>>(degree, knots.data(), knots.size(), numSpans, table.coefficients.data(), table.inverseSpanLengths.data());
-		checkLaunch();
+		DeviceBasisTable<T> table = allocateBasisTableOnDevice<T>(degree, knots.size());
+		fillBasisTableOnDevice<T>(knots, table);
 		return table;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Explicit instantiations: the template is defined only here, so these are the types callers can use.
+	// Explicit instantiations: the templates are defined only here, so these are the types callers can use.
+	template DeviceBasisTable<float>  allocateBasisTableOnDevice<float>( int degree, std::size_t numKnots);
+	template DeviceBasisTable<double> allocateBasisTableOnDevice<double>(int degree, std::size_t numKnots);
+	template void fillBasisTableOnDevice<float>( DeviceBuffer<float>  const& knots, DeviceBasisTable<float>&  table);
+	template void fillBasisTableOnDevice<double>(DeviceBuffer<double> const& knots, DeviceBasisTable<double>& table);
 	template DeviceBasisTable<float>  buildBasisTableOnDevice<float>( int degree, DeviceBuffer<float>  const& knots);
 	template DeviceBasisTable<double> buildBasisTableOnDevice<double>(int degree, DeviceBuffer<double> const& knots);
 }  // namespace gpu

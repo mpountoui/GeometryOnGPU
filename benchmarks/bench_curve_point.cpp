@@ -19,6 +19,15 @@
 #include "geom/span_lookup.hpp"
 #include "viz/svg_document.hpp"
 
+#ifdef GEOM_HAS_CUDA
+#include <cuda_runtime.h>
+
+#include "gpu/basis_table_gpu.hpp"
+#include "gpu/cuda_check.hpp"
+#include "gpu/cuda_event.hpp"
+#include "gpu/device_buffer.hpp"
+#endif
+
 // Benchmark: evaluate N points C(u) on a NURBS curve on the CPU (one thread) and time it, with four
 // methods:
 //   direct  everything per point: findSpan (A2.1), basisFunctions (A2.2), weighted sum (A4.1);
@@ -40,6 +49,11 @@
 // Only the evaluation loops are timed: the curve, the parameters, the tables and the output arrays
 // are set up before. One warm-up run, then the best and the median of kRuns runs. The checksum is printed
 // so the compiler cannot skip the work, and it lets float and double results be compared.
+//
+// With CUDA, a last section times the basis table build on the GPU against the CPU: the kernel alone
+// (CUDA events), allocation + kernel, upload + build + download (the table in host memory, as from
+// the CPU), and the first call of each type (for float also CUDA context creation; it runs before
+// any other CUDA call so that this cost shows up there).
 
 namespace
 {
@@ -388,6 +402,156 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+#ifdef GEOM_HAS_CUDA
+	// The basis table build of one type on the CPU and the GPU, in seconds: best of kRuns, except the first call.
+	struct GpuBuild
+	{
+		double firstCallSeconds{};   // the type's first GPU build, upload to download (float: also CUDA context creation)
+		double cpuSeconds{};         // BasisTable on the CPU, 1 thread
+		double kernelSeconds{};      // the kernel alone: CUDA events around fillBasisTableOnDevice
+		double buildSeconds{};       // buildBasisTableOnDevice until done: allocation + kernel (host clock)
+		double endToEndSeconds{};    // upload knots, build, download: the table in host memory, like the CPU's
+		double difference{};         // largest |GPU - CPU| over all coefficients
+	};
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	double secondsSince(Clock::time_point start)
+	{
+		return std::chrono::duration<double>(Clock::now() - start).count();
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The smallest of kRuns results of measure(), which returns seconds.
+	template <typename Measure>
+	double bestOf(Measure const& measure)
+	{
+		double best = measure();
+		for (int run = 1; run < kRuns; ++run)
+		{
+			best = std::min(best, measure());
+		}
+		return best;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// What a caller pays to get the GPU table into host memory: upload the knots, build, download both
+	// arrays. The coefficients are kept for the comparison with the CPU.
+	template <std::floating_point T>
+	double timeGpuEndToEnd(int degree, std::span<T const> knots, std::vector<T>& coefficients)
+	{
+		Clock::time_point const start = Clock::now();
+		gpu::DeviceBuffer<T> const deviceKnots{knots};
+		gpu::DeviceBasisTable<T> const table = gpu::buildBasisTableOnDevice<T>(degree, deviceKnots);
+		coefficients = table.coefficients.download();
+		std::vector<T> const inverseSpanLengths = table.inverseSpanLengths.download();
+		return secondsSince(start);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// buildBasisTableOnDevice with the knots already on the GPU. The launch returns at once, so the clock
+	// is read only after cudaDeviceSynchronize, which waits until the GPU is done.
+	template <std::floating_point T>
+	double timeGpuBuild(int degree, gpu::DeviceBuffer<T> const& knots)
+	{
+		Clock::time_point const start = Clock::now();
+		gpu::DeviceBasisTable<T> const table = gpu::buildBasisTableOnDevice<T>(degree, knots);
+		gpu::checkCuda(cudaDeviceSynchronize());
+		return secondsSince(start);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The kernel alone: events directly around the launch, into an allocated table, so no allocation
+	// (which would leave the GPU idle between the events) is measured.
+	template <std::floating_point T>
+	double timeGpuKernel(gpu::DeviceBuffer<T> const& knots, gpu::DeviceBasisTable<T>& table)
+	{
+		gpu::CudaEvent start{};
+		gpu::CudaEvent stop{};
+		start.record();
+		gpu::fillBasisTableOnDevice<T>(knots, table);
+		stop.record();
+		return gpu::elapsedSeconds(start, stop);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	double maxDifference(std::span<T const> a, std::span<T const> b)
+	{
+		double result = 0.0;
+		for (std::size_t k = 0; k < a.size(); ++k)
+		{
+			result = std::max(result, std::abs(static_cast<double>(a[k]) - static_cast<double>(b[k])));
+		}
+		return result;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The first call comes first, so that for the first type it also pays for the CUDA context.
+	template <std::floating_point T>
+	GpuBuild compareGpuBuild(int degree, std::size_t numKnots)
+	{
+		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree, numKnots);
+		std::span<T const> const knots = curve.knots();
+		std::vector<T> coefficients{};
+		GpuBuild g{};
+		g.firstCallSeconds = timeGpuEndToEnd<T>(degree, knots, coefficients);
+		g.cpuSeconds = timeBuild<geom::BasisTable<T>>(curve);
+		g.endToEndSeconds = bestOf([&] { return timeGpuEndToEnd<T>(degree, knots, coefficients); });
+		gpu::DeviceBuffer<T> const deviceKnots{knots};
+		g.buildSeconds = bestOf([&] { return timeGpuBuild<T>(degree, deviceKnots); });
+		gpu::DeviceBasisTable<T> table = gpu::allocateBasisTableOnDevice<T>(degree, knots.size());
+		g.kernelSeconds = bestOf([&] { return timeGpuKernel<T>(deviceKnots, table); });
+		g.difference = maxDifference<T>(geom::BasisTable<T>(curve).coefficients(), coefficients);
+		return g;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	void printGpuRow(std::string_view name, double seconds, double cpuSeconds)
+	{
+		std::println("    {:<28}{:>12.1f}{:>11.2f}x", name, seconds * 1e6, cpuSeconds / seconds);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	void printGpuBuild(std::string_view type, GpuBuild const& g)
+	{
+		std::println();
+		std::println("  {:<30}{:>12}{:>12}", type, "best [us]", "CPU / this");
+		printGpuRow("CPU, 1 thread", g.cpuSeconds, g.cpuSeconds);
+		printGpuRow("GPU kernel only", g.kernelSeconds, g.cpuSeconds);
+		printGpuRow("GPU allocate + kernel", g.buildSeconds, g.cpuSeconds);
+		printGpuRow("GPU upload, build, download", g.endToEndSeconds, g.cpuSeconds);
+		printGpuRow("GPU first call", g.firstCallSeconds, g.cpuSeconds);
+		std::println("    largest |GPU - CPU| coefficient: {:.1e}", g.difference);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Measures both types before printing: asking for the device name is a CUDA call too, and would
+	// create the context before float's first call.
+	void runGpuComparisons(int degree, std::size_t numKnots)
+	{
+		GpuBuild const floats = compareGpuBuild<float>(degree, numKnots);
+		GpuBuild const doubles = compareGpuBuild<double>(degree, numKnots);
+		cudaDeviceProp properties{};
+		gpu::checkCuda(cudaGetDeviceProperties(&properties, 0));
+		std::println();
+		std::println("Basis table build, CPU vs GPU ({}, sm_{}{}), best of {} runs", properties.name, properties.major, properties.minor, kRuns);
+		printGpuBuild("float", floats);
+		printGpuBuild("double", doubles);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+#endif
+	
 	// Saves the benchmark curve (double) with its control polygon as an SVG next to the executable.
 	void writeCurveSvg(char const* executable, int degree, std::size_t numKnots)
 	{
@@ -476,5 +640,8 @@ int main(int argc, char* argv[])
 	Comparison const floats = runComparison<float>("float", degree, options.numKnots, options.count);
 	Comparison const doubles = runComparison<double>("double", degree, options.numKnots, options.count);
 	printChecksums(floats, doubles);
+#ifdef GEOM_HAS_CUDA
+	runGpuComparisons(degree, options.numKnots);
+#endif
 	return 0;
 }

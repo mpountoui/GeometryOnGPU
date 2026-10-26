@@ -19,10 +19,21 @@ namespace gpu
 		DeviceBuffer<T> inverseSpanLengths{};    // numSpans values 1 / h_j (0 for empty spans)
 	};
 	
-	// Builds the basis table of a valid clamped knot vector (already in device memory) on the GPU,
-	// one thread per span. Returns once the kernel is launched: the GPU may still be working, and the
-	// next call that waits for it (e.g. a download) also reports errors from the kernel.
-	// Defined in basis_table_gpu.cu for float and double only.
+	// The functions below are defined in basis_table_gpu.cu for float and double only.
+	
+	// Device memory for the basis table of numKnots knots, not yet filled (uninitialized).
+	template <std::floating_point T>
+	DeviceBasisTable<T> allocateBasisTableOnDevice(int degree, std::size_t numKnots);
+	
+	// Fills an allocated table from a valid clamped knot vector (already in device memory), one thread
+	// per span. Only launches the kernel, no allocation, so it can reuse a table and be timed alone.
+	// Returns once the kernel is launched: the GPU may still be working, and the next call that waits
+	// for it (e.g. a download) also reports errors from the kernel. Throws std::invalid_argument if the
+	// table was allocated for a different number of knots.
+	template <std::floating_point T>
+	void fillBasisTableOnDevice(DeviceBuffer<T> const& knots, DeviceBasisTable<T>& table);
+	
+	// allocateBasisTableOnDevice, then fillBasisTableOnDevice.
 	template <std::floating_point T>
 	DeviceBasisTable<T> buildBasisTableOnDevice(int degree, DeviceBuffer<T> const& knots);
 }  // namespace gpu

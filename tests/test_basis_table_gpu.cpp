@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <limits>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include "check.hpp"
@@ -69,19 +70,27 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Builds the table on the GPU from dirty memory and compares it with the CPU BasisTable. 1 / h is one
-	// correctly rounded division on both sides, so it must be identical.
+	// Downloads the GPU table and compares it with the CPU one. 1 / h is one correctly rounded division
+	// on both sides, so it must be identical.
+	template <std::floating_point T>
+	void checkTable(BasisTable<T> const& cpu, gpu::DeviceBasisTable<T> const& table)
+	{
+		CHECK(table.degree == cpu.degree());
+		CHECK(table.numSpans == cpu.numSpans());
+		CHECK(table.inverseSpanLengths.download() == std::vector<T>(cpu.inverseSpanLengths().begin(), cpu.inverseSpanLengths().end()));
+		checkCoefficients(cpu, table.coefficients.download());
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Builds the table on the GPU from dirty memory and compares it with the CPU BasisTable.
 	template <std::floating_point T>
 	void checkAgainstCpu(int degree, std::vector<T> const& knots)
 	{
 		BasisTable<T> const cpu(degree, knots);
 		DeviceBuffer<T> const deviceKnots{std::span<T const>(knots)};
 		dirtyDeviceMemory(cpu.coefficients().size() * sizeof(T));
-		gpu::DeviceBasisTable<T> const table = gpu::buildBasisTableOnDevice<T>(degree, deviceKnots);
-		CHECK(table.degree == degree);
-		CHECK(table.numSpans == cpu.numSpans());
-		CHECK(table.inverseSpanLengths.download() == std::vector<T>(cpu.inverseSpanLengths().begin(), cpu.inverseSpanLengths().end()));
-		checkCoefficients(cpu, table.coefficients.download());
+		checkTable(cpu, gpu::buildBasisTableOnDevice<T>(degree, deviceKnots));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -117,12 +126,53 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// One allocated table filled twice from different knots of the same length: the second fill
+	// overwrites every value of the first (span 3 is non-empty the first time, empty the second).
+	template <std::floating_point T>
+	void testRefill()
+	{
+		std::vector<T> const first{0, 0, 0, 1, 2, 3, 4, 5, 5, 5};
+		std::vector<T> const second{0, 0, 0, 1, 1, 3, 4, 5, 5, 5};
+		DeviceBuffer<T> knots{std::span<T const>(first)};
+		gpu::DeviceBasisTable<T> table = gpu::allocateBasisTableOnDevice<T>(2, first.size());
+		gpu::fillBasisTableOnDevice<T>(knots, table);
+		checkTable(BasisTable<T>(2, first), table);
+		knots.upload(second);
+		gpu::fillBasisTableOnDevice<T>(knots, table);
+		checkTable(BasisTable<T>(2, second), table);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// A table allocated for 10 knots cannot be filled from 11.
+	template <std::floating_point T>
+	void testFillSizeMismatchThrows()
+	{
+		std::vector<T> const knots{0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6};
+		DeviceBuffer<T> const deviceKnots{std::span<T const>(knots)};
+		gpu::DeviceBasisTable<T> table = gpu::allocateBasisTableOnDevice<T>(2, knots.size() - 1);
+		bool thrown = false;
+		try
+		{
+			gpu::fillBasisTableOnDevice<T>(deviceKnots, table);
+		}
+		catch (std::invalid_argument const&)
+		{
+			thrown = true;
+		}
+		CHECK(thrown);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	template <std::floating_point T>
 	void runAllTests()
 	{
 		testUniform<T>();
 		testRepeatedKnots<T>();
 		testManySpans<T>();
+		testRefill<T>();
+		testFillSizeMismatchThrows<T>();
 	}
 }  // namespace
 

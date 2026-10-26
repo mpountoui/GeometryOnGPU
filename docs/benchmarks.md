@@ -135,3 +135,38 @@ Observations:
   lookup 435 us; they pay for themselves after 1.26 million, 54,000 and 32,000 points. So the lookup
   costs the most to prepare but pays off soonest, because it saves the most per point.
 
+
+## Basis table build, CPU vs GPU (`bench_curve_point` with CUDA, since 2026-10-26)
+
+The last section of `bench_curve_point` (only with CUDA) builds the `BasisTable` on the CPU and with
+`buildBasisTableOnDevice` (one thread per span, `src/gpu/basis_table_gpu.cu`), best of 5:
+
+- **kernel only**: CUDA events directly around the launch, into an allocated table;
+- **allocate + kernel**: host clock around `buildBasisTableOnDevice` and `cudaDeviceSynchronize`;
+- **upload, build, download**: the table ends up in host memory, like the CPU's;
+- **first call**: the type's first end-to-end build (for float, the program's first CUDA call: it also
+  creates the CUDA context).
+
+### 2026-10-26, RTX 2000 Ada (sm_89) and AMD EPYC 7443 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds, float (double)
+
+| spans | CPU | GPU kernel only | GPU allocate + kernel | GPU upload, build, download | GPU first call |
+|---|---|---|---|---|---|
+| 97 | 4.2 (5.0) | 10.1 (25.4) | 14.9 (30.1) | 160 (179) | 245,503 (217) |
+| 9,997 | 433 (515) | 38 (88) | 43 (92) | 275 (403) | 156,168 (494) |
+| 99,997 | 4,391 (5,168) | 313 (667) | 450 (813) | 1,277 (2,174) | 147,545 (3,132) |
+
+Largest |GPU - CPU| coefficient: 2.4e-7 (float), 3.3e-16 (double), FMA rounding.
+
+Observations:
+
+- With ~100 spans the GPU loses even on the kernel alone (launch latency, ~10 us). From ~10,000 spans the
+  kernel is 11-14x faster than one CPU core (float).
+- The first CUDA call costs 150-250 ms (context creation). Double's first call only adds the lazy
+  loading of its kernel (CUDA 12 loads each kernel at its first launch).
+- End to end, the copies dominate: at 100k spans ~830 us of 1,277 go to upload and download (6.4 MB
+  from pageable host memory, ~8 GB/s). So later kernels should read the table where it is, on the GPU.
+- The kernel is about 10x slower than its memory limit: writing 6.4 MB at ~224 GB/s takes ~30 us, the
+  kernel 313 us. Double takes 2x as long as float (the bytes), not ~30x (this GPU's FP64 rate is 1/64), so
+  it is limited by memory access, not arithmetic. Suspects: the in-place recurrence works on the table
+  in global memory (p read/write passes over each row), and neighbouring threads write rows 64 bytes
+  apart (uncoalesced). Next: confirm with `ncu`.
