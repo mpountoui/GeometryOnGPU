@@ -12,7 +12,7 @@ namespace gpu
 	{
 		// Threads per block, as in basis_table_gpu.cu. A block is (p + 1) x (256 / (p + 1)) threads.
 		constexpr unsigned int kThreadsPerBlock = 256;
-
+		
 		// One thread per coefficient: threadIdx.x = d, threadIdx.y = row within the block, and the 1D grid
 		// counts blocks of blockDim.y rows. Threads are numbered x-first, so neighbouring threads write
 		// neighbouring A_j[d] (coalesced). The pointers are device memory.
@@ -30,9 +30,9 @@ namespace gpu
 			std::span<geom::Point4<T> const> const points(weightedPoints, numSpans + p);
 			geom::detail::buildCurveCoefficient<T>(row, d, degree, basis, points, std::span<geom::Point4<T>>(coefficients, numSpans * (p + 1)));
 		}
-
+		
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+		
 		template <std::floating_point T>
 		void checkSizes(DeviceBasisTable<T> const& basis, DeviceBuffer<geom::Point4<T>> const& weightedPoints, DeviceCurveTable<T> const& table)
 		{
@@ -45,18 +45,18 @@ namespace gpu
 			}
 		}
 	}  // namespace
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <std::floating_point T>
 	DeviceCurveTable<T> allocateCurveTableOnDevice(int degree, std::size_t numSpans)
 	{
 		auto const p = static_cast<std::size_t>(degree);
 		return {degree, numSpans, DeviceBuffer<geom::Point4<T>>(numSpans * (p + 1)), DeviceBuffer<T>(numSpans)};
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	// Enough blocks to give every row a line of the block: ceil(numSpans / blockDim.y). The copy of 1 / h
 	// goes into the same queue (stream) as the kernel, so it runs after it; device-to-device cudaMemcpy
 	// does not make the CPU wait.
@@ -71,9 +71,9 @@ namespace gpu
 		checkLaunch();
 		checkCuda(cudaMemcpy(table.inverseSpanLengths.data(), basis.inverseSpanLengths.data(), basis.inverseSpanLengths.sizeBytes(), cudaMemcpyDeviceToDevice));
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	template <std::floating_point T>
 	DeviceCurveTable<T> buildCurveTableOnDevice(DeviceBasisTable<T> const& basis, DeviceBuffer<geom::Point4<T>> const& weightedPoints)
 	{
@@ -81,9 +81,9 @@ namespace gpu
 		fillCurveTableOnDevice<T>(basis, weightedPoints, table);
 		return table;
 	}
-
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-
+	
 	// Explicit instantiations: the templates are defined only here, so these are the types callers can use.
 	template DeviceCurveTable<float>  allocateCurveTableOnDevice<float>( int degree, std::size_t numSpans);
 	template DeviceCurveTable<double> allocateCurveTableOnDevice<double>(int degree, std::size_t numSpans);

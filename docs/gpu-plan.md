@@ -17,7 +17,7 @@ Update the status column when a step is done, and record agreed decisions below.
 | 1 | Basis table kernel, one thread per span; test GPU == CPU `BasisTable` | `__global__`, `.cu` in CMake, thread indexing, `DeviceBuffer` | done 2026-10-26 |
 | 1b | GPU basis table build in `bench_curve_point`: kernel only (CUDA events), build, end to end, first call | Asynchronous launches, CUDA events, warm-up | done 2026-10-26 |
 | 1c | Profile the basis table kernel with `ncu`: confirm why it is ~10x slower than its memory limit | Nsight Compute, memory throughput, coalescing | postponed: profile with step 2's kernel |
-| 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | in progress |
+| 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | done 2026-11-01 |
 | 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | |
 | 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | |
 | 5 | Basis table kernel with one block per span, levels in shared memory | `__shared__`, `__syncthreads()`, warps | |
@@ -74,7 +74,7 @@ Findings (2026-10-26, RTX 2000 Ada):
 - Results in `docs/benchmarks.md`: from ~10k spans the kernel is 11-14x faster than one CPU core, but
   ~10x slower than its memory limit (memory-access bound, see there); copies dominate end to end.
 
-## Step 2: agreed decisions
+## Step 2: agreed decisions (implemented)
 
 - Move the body of `CurveTable::buildRow` into a `GEOM_HD` free function `detail::buildCurveCoefficient`
   that computes one `A_j[d]`; the CPU constructor calls it per `(row, d)`, the kernel once per thread.
@@ -93,3 +93,11 @@ Findings (2026-10-26, RTX 2000 Ada):
   as step 1, float and double, ulp tolerance per row; `dirtyDeviceMemory` and `checkRow` move to a shared
   test header.
 - No benchmark in this step (step 4 measures all precomputation).
+
+Findings (2026-11-01, RTX A4000):
+
+- GPU and CPU coefficients differ by at most 5.4 (float) and 5.9 (double) units of epsilon times the
+  row's scale (largest |c| times largest |Pw| component: the sums cancel, so errors scale with the terms,
+  not with A_j[d]). That is the step 1 basis table error plus FMA in the sum. With `--fmad=false` both
+  tables are bit-identical. Test tolerance: 16.
+- 1/h is bit-identical (copied). A kernel that skips one coefficient per row fails the test (NaN fill).

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "gpu_test_helpers.hpp"
 #include "test_curves.hpp"
 #include "geom/basis_table.hpp"
 #include "gpu/basis_table_gpu.hpp"
@@ -27,17 +28,6 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Sets every byte of a freed device block of this size to 0xFF (NaN as float and double). The next
-	// cudaMalloc of the same size usually gets this block back, so a value the kernel forgets to write
-	// shows up as NaN instead of a lucky 0.
-	void dirtyDeviceMemory(std::size_t bytes)
-	{
-		DeviceBuffer<unsigned char> buffer(bytes);
-		gpu::checkCuda(cudaMemset(buffer.data(), 0xFF, bytes));
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
 	// Each GPU value within kUlps * epsilon * (largest |value| of the CPU row, at least 1).
 	template <std::floating_point T>
 	void checkRow(std::span<T const> cpu, std::span<T const> gpu)
@@ -47,11 +37,7 @@ namespace
 		{
 			scale = std::max(scale, std::abs(c));
 		}
-		T const tolerance = static_cast<T>(kUlps) * std::numeric_limits<T>::epsilon() * scale;
-		for (std::size_t i = 0; i < cpu.size(); ++i)
-		{
-			CHECK(test::near(gpu[i], cpu[i], tolerance));
-		}
+		test::checkWithin<T>(cpu, gpu, static_cast<T>(kUlps) * std::numeric_limits<T>::epsilon() * scale);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -89,7 +75,7 @@ namespace
 	{
 		BasisTable<T> const cpu(degree, knots);
 		DeviceBuffer<T> const deviceKnots{std::span<T const>(knots)};
-		dirtyDeviceMemory(cpu.coefficients().size() * sizeof(T));
+		test::dirtyDeviceMemory(cpu.coefficients().size() * sizeof(T));
 		checkTable(cpu, gpu::buildBasisTableOnDevice<T>(degree, deviceKnots));
 	}
 	

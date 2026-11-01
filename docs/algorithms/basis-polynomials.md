@@ -2,7 +2,8 @@
 
 Code: `src/geom/basis_polynomials.hpp` (one span's basis polynomials), `src/geom/basis_table.hpp`
 (the basis table for all spans, and evaluation from it), `src/geom/curve_table.hpp` (the curve
-table `A_j`, and evaluation from it). Next: the GPU kernels.
+table `A_j`, and evaluation from it). GPU builds: `src/gpu/basis_table_gpu.cu` and `curve_table_gpu.cu`
+(status and decisions in `docs/gpu-plan.md`).
 Tests: `tests/test_basis_polynomials.cpp` (against `basisFunctions`, A2.2), `tests/test_basis_table.cpp`
 and `tests/test_curve_table.cpp` (points against `curvePoint`, A4.1).
 Benchmark: `bench_curve_point` times both tables against `curvePoint` (results in `docs/benchmarks.md`).
@@ -124,8 +125,9 @@ is `O(p)`).
   turn (read level `k - 1`, write level `k`), with `__syncthreads()` between levels.
   `__syncthreads()` only synchronizes one block, which is enough because spans are independent:
   any number of spans means just more blocks.
-- Kernel 2, curve coefficients: one thread per `(span, d)`, `A_j[d] = sum_r coef[r][d] * Pw[j-p+r]`.
-  (May be merged into kernel 1 later.)
+- Kernel 2, curve coefficients (implemented, `curve_table_gpu.cu`): one thread per `(span, d)`,
+  `A_j[d] = sum_r coef[r][d] * Pw[j-p+r]`, in 2D blocks of `(p + 1) x (256 / (p + 1))` threads so a warp
+  writes neighbouring coefficients. (May be merged into kernel 1 later.)
 - Known weakness: 16 threads use half of a 32-thread warp. Later: several spans per block.
 
 ## Evaluation from the basis table (implemented, CPU)
@@ -199,4 +201,5 @@ batch size (1, 100, 10^4, 10^6 parameters) to find where it overtakes the host.
   interior knots (zero-length spans, 0/0 factors).
 - Curve table: Horner evaluation against `curvePoint` on a sweep of `u`, including `u = u_m`.
 - `float` and `double`, with a tolerance per type.
-- GPU tables (step 3) equal the CPU tables (step 2), up to rounding.
+- GPU tables equal the CPU tables up to FMA rounding (`test_basis_table_gpu.cpp`,
+  `test_curve_table_gpu.cpp`; bit-identical with `--fmad=false`).

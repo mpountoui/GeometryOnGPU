@@ -60,7 +60,9 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   `CudaEvent` (`cuda_event.hpp/.cpp`, GPU-side timing with `elapsedSeconds`).
   Kernels live here too: `basis_table_gpu.hpp/.cu` builds a `BasisTable` on the GPU
   (`allocateBasisTableOnDevice` + `fillBasisTableOnDevice` (launch only, so it can be timed and reuse a
-  table) = `buildBasisTableOnDevice`; one thread per span; result kept in device memory as `DeviceBasisTable`).
+  table) = `buildBasisTableOnDevice`; one thread per span; result kept in device memory as `DeviceBasisTable`),
+  and `curve_table_gpu.hpp/.cu` builds a `CurveTable` from a `DeviceBasisTable` and the control points
+  (same allocate/fill/build split; one thread per coefficient `(span, d)` in 2D blocks; `DeviceCurveTable`).
   Pattern: the `.hpp` declares a host function with no CUDA syntax (so `.cpp` files can call it),
   the `.cu` holds the kernel and explicitly instantiates `float` and `double`. Kernels call the same
   `GEOM_HD` per-item functions as the CPU code (e.g. `detail::buildBasisRow`), so the two cannot drift.
@@ -161,7 +163,7 @@ Record each with its reason, for example: "Kernel X assumes sorted input because
 - GPU results are not bit-identical to the CPU: nvcc fuses `a * b + c` into FMA, g++ on x86-64 does not.
   GPU tests compare with an ulp tolerance (`--fmad=false` makes them identical, useful to check that
   FMA is the only cause). `cudaMalloc` memory is not zeroed, so kernels write every output value, and
-  GPU tests fill freed device memory with NaN first so a missed write fails (`test_basis_table_gpu.cpp`).
+  GPU tests fill freed device memory with NaN first so a missed write fails (`tests/gpu_test_helpers.hpp`).
 - `.cu` files get `-Wall -Wextra` but not `-Wpedantic`: nvcc forwards it to the host compiler, which then
   warns about every line marker in nvcc's generated code.
 

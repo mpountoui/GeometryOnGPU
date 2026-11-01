@@ -19,13 +19,13 @@ namespace gpu
 		DeviceBuffer<geom::Point4<T>> coefficients{};       // numSpans rows of p + 1 weighted points A_j[0..p]
 		DeviceBuffer<T> inverseSpanLengths{};               // numSpans values 1 / h_j, copied from the basis table
 	};
-
+	
 	// The functions below are defined in curve_table_gpu.cu for float and double only.
-
+	
 	// Device memory for the curve table of a curve with numSpans spans, not yet filled (uninitialized).
 	template <std::floating_point T>
 	DeviceCurveTable<T> allocateCurveTableOnDevice(int degree, std::size_t numSpans);
-
+	
 	// Fills an allocated table from the curve's basis table and its numSpans + p weighted control points,
 	// both already in device memory: one thread per coefficient A_j[d], then a device-to-device copy of
 	// the 1 / h values. The basis table is not changed, so it can serve other curves with the same knots.
@@ -33,7 +33,7 @@ namespace gpu
 	// the GPU also reports errors. Throws std::invalid_argument if degree or sizes do not match.
 	template <std::floating_point T>
 	void fillCurveTableOnDevice(DeviceBasisTable<T> const& basis, DeviceBuffer<geom::Point4<T>> const& weightedPoints, DeviceCurveTable<T>& table);
-
+	
 	// allocateCurveTableOnDevice, then fillCurveTableOnDevice.
 	template <std::floating_point T>
 	DeviceCurveTable<T> buildCurveTableOnDevice(DeviceBasisTable<T> const& basis, DeviceBuffer<geom::Point4<T>> const& weightedPoints);
