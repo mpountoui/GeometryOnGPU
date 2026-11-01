@@ -112,7 +112,7 @@ geom_enable_warnings(viz)
 # template) and CudaEvent (GPU timing); and the kernels (.cu files, compiled by nvcc).
 # PUBLIC CUDA::cudart: whatever links "gpu" can include <cuda_runtime.h> and call the CUDA runtime too.
 if(GEOM_HAS_CUDA)
-	add_library(gpu STATIC src/gpu/cuda_check.cpp src/gpu/cuda_event.cpp src/gpu/basis_table_gpu.cu)
+	add_library(gpu STATIC src/gpu/cuda_check.cpp src/gpu/cuda_event.cpp src/gpu/basis_table_gpu.cu src/gpu/curve_table_gpu.cu)
 	target_compile_features(gpu PRIVATE cxx_std_23)
 	target_include_directories(gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 	target_link_libraries(gpu PUBLIC geom CUDA::cudart)

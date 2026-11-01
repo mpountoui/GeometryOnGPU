@@ -16,8 +16,8 @@ Update the status column when a step is done, and record agreed decisions below.
 | 0 | g++-14, clean build, ctest, CPU benchmark on the RTX 2000 Ada box | Toolchain | done 2026-10-26 |
 | 1 | Basis table kernel, one thread per span; test GPU == CPU `BasisTable` | `__global__`, `.cu` in CMake, thread indexing, `DeviceBuffer` | done 2026-10-26 |
 | 1b | GPU basis table build in `bench_curve_point`: kernel only (CUDA events), build, end to end, first call | Asynchronous launches, CUDA events, warm-up | done 2026-10-26 |
-| 1c | Profile the basis table kernel with `ncu`: confirm why it is ~10x slower than its memory limit | Nsight Compute, memory throughput, coalescing | next |
-| 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | |
+| 1c | Profile the basis table kernel with `ncu`: confirm why it is ~10x slower than its memory limit | Nsight Compute, memory throughput, coalescing | postponed: profile with step 2's kernel |
+| 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | in progress |
 | 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | |
 | 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | |
 | 5 | Basis table kernel with one block per span, levels in shared memory | `__shared__`, `__syncthreads()`, warps | |
@@ -73,3 +73,23 @@ Findings (2026-10-26, RTX 2000 Ada):
   `allocateBasisTableOnDevice` and `fillBasisTableOnDevice` (launch only); `build` = both.
 - Results in `docs/benchmarks.md`: from ~10k spans the kernel is 11-14x faster than one CPU core, but
   ~10x slower than its memory limit (memory-access bound, see there); copies dominate end to end.
+
+## Step 2: agreed decisions
+
+- Move the body of `CurveTable::buildRow` into a `GEOM_HD` free function `detail::buildCurveCoefficient`
+  that computes one `A_j[d]`; the CPU constructor calls it per `(row, d)`, the kernel once per thread.
+  Empty spans need no branch: their basis row is zero, so `A = 0` is written anyway.
+- Kernel `curveTableKernel` in `src/gpu/curve_table_gpu.cu`: 2D block `(p + 1, 256 / (p + 1))`
+  (`threadIdx.x = d`, `threadIdx.y` = row in the block), 1D grid of `ceil(numSpans / blockDim.y)` blocks
+  along `x` (`gridDim.y` is capped at 65,535). `row = blockIdx.x * blockDim.y + threadIdx.y`. Threads are
+  numbered x-first, so a warp writes 32 neighbouring `Point4`s (coalesced), unlike step 1.
+- `gpu::DeviceCurveTable<T>` (degree, numSpans, `DeviceBuffer<Point4<T>>` coefficients, `DeviceBuffer<T>`
+  inverse span lengths), with `allocate`/`fill`/`build` functions as in step 1.
+- The 1/h values are copied from the `DeviceBasisTable` with a device-to-device `cudaMemcpy` after the
+  launch (the kernel only computes `A_j[d]`, the basis table stays intact for other curves with the same
+  knots). Revisit in step 3: 1/h depends only on the knots, as does the span lookup, so a caller-owned
+  `Knots`/`DeviceKnots` (knots, 1/h, lookup cells) shared by both tables may be cleaner (CPU and GPU together).
+- Test `test_curve_table_gpu.cpp`: GPU basis table + GPU curve table against the CPU `CurveTable`, same curves
+  as step 1, float and double, ulp tolerance per row; `dirtyDeviceMemory` and `checkRow` move to a shared
+  test header.
+- No benchmark in this step (step 4 measures all precomputation).

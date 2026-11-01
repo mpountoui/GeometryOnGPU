@@ -54,10 +54,6 @@ namespace geom
 		std::span<Point4<T> const> spanCoefficients(std::size_t span) const;
 		
 	private:
-		// A_j[d] = sum_r c(r, d) Pw[j-p+r] for the span of this row (zeros for an empty span).
-		void buildRow(std::size_t row, BasisTable<T> const& basis, std::span<Point4<T> const> weightedPoints);
-		
-	private:
 		int m_degree{};
 		std::size_t m_numSpans{};
 		std::vector<Point4<T>> m_coefficients{};
@@ -85,6 +81,16 @@ namespace geom
 	template <std::floating_point T>
 	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, SpanLookup<T> const& lookup, T u);
 	
+	namespace detail
+	{
+		// Computes one coefficient of a curve table, A_j[d] = sum_r c(r, d) Pw[row + r] of row `row`
+		// (span j = row + p), into coefficients[row * (p + 1) + d]. basisCoefficients, weightedPoints and
+		// coefficients are the whole tables. An empty span has a zero basis row, so it gets zeros too.
+		// Shared by CurveTable (one call per row and d) and the GPU kernel (one thread per row and d).
+		template <std::floating_point T>
+		GEOM_HD void buildCurveCoefficient(std::size_t row, std::size_t d, int degree, std::span<T const> basisCoefficients, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients);
+	}  // namespace detail
+	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -99,10 +105,14 @@ namespace geom
 		m_coefficients(basis.numSpans() * (static_cast<std::size_t>(basis.degree()) + 1)),
 		m_inverseSpanLengths(basis.inverseSpanLengths().begin(), basis.inverseSpanLengths().end())
 	{
-		assert(weightedPoints.size() == m_numSpans + static_cast<std::size_t>(m_degree));
+		auto const p = static_cast<std::size_t>(m_degree);
+		assert(weightedPoints.size() == m_numSpans + p);
 		for (std::size_t row = 0; row < m_numSpans; ++row)
 		{
-			buildRow(row, basis, weightedPoints);
+			for (std::size_t d = 0; d <= p; ++d)
+			{
+				detail::buildCurveCoefficient<T>(row, d, m_degree, basis.coefficients(), weightedPoints, m_coefficients);
+			}
 		}
 	}
 	
@@ -157,28 +167,6 @@ namespace geom
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// Row r of the span's basis table belongs to the control point Pw[row + r] (j - p + r = row + r).
-	template <std::floating_point T>
-	void CurveTable<T>::buildRow(std::size_t row, BasisTable<T> const& basis, std::span<Point4<T> const> weightedPoints)
-	{
-		auto const p = static_cast<std::size_t>(m_degree);
-		std::span<T const> const c = basis.spanCoefficients(row + p);
-		for (std::size_t d = 0; d <= p; ++d)
-		{
-			Point4<T> sum{};
-			for (std::size_t r = 0; r <= p; ++r)
-			{
-				T const weight = c[r * (p + 1) + d];
-				Point4<T> const& pw = weightedPoints[row + r];
-				sum = {sum.x + weight * pw.x, sum.y + weight * pw.y, sum.z + weight * pw.z, sum.w + weight * pw.w};
-			}
-			m_coefficients[row * (p + 1) + d] = sum;
-		}
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -222,5 +210,23 @@ namespace geom
 	{
 		std::size_t const span = lookup.find(curve.knots(), u);
 		return curvePointFromCurveTable<T>(curve.degree(), curve.knots(), table.coefficients(), table.inverseSpanLengths(), span, u);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Row r of the span's basis table belongs to the control point Pw[row + r] (j - p + r = row + r).
+	template <std::floating_point T>
+	GEOM_HD void detail::buildCurveCoefficient(std::size_t row, std::size_t d, int degree, std::span<T const> basisCoefficients, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients)
+	{
+		auto const p = static_cast<std::size_t>(degree);
+		std::span<T const> const c = basisCoefficients.subspan(row * (p + 1) * (p + 1), (p + 1) * (p + 1));
+		Point4<T> sum{};
+		for (std::size_t r = 0; r <= p; ++r)
+		{
+			T const weight = c[r * (p + 1) + d];
+			Point4<T> const& pw = weightedPoints[row + r];
+			sum = {sum.x + weight * pw.x, sum.y + weight * pw.y, sum.z + weight * pw.z, sum.w + weight * pw.w};
+		}
+		coefficients[row * (p + 1) + d] = sum;
 	}
 }  // namespace geom
