@@ -113,19 +113,18 @@ Findings (2026-11-01, RTX A4000):
 - All GPU sections are measured before anything is printed, so float's first basis table call still
   pays for the CUDA context.
 
-Findings (2026-11-07, RTX A4500; details in `docs/benchmarks.md`):
+Findings (2026-11-07, RTX A4500; details and numbers in `docs/benchmarks.md`):
 
-- The kernel is near its memory limit (~80% at 1M spans), 15-180x faster than one CPU core from 10k spans.
-- End to end (curve in host memory to table in host memory) 6-15x faster than the full CPU build from 100k
-  spans; the copies dominate (~1 ms of kernels in 10.6 ms at 1M spans, float).
-- Some `allocate + kernel` cases cost ~140 us more than the kernel: `cudaMalloc` maps a new 2 MB chunk
-  when the allocation does not fit in an already mapped one.
-- Changed after measuring: the end-to-end timers (also the basis table's) download into host memory
-  allocated before the clock starts. Allocating and freeing large host vectors inside the timed region
-  cost up to ~35 ms (float) / ~80 ms (double) at 1M spans and varied with glibc's state.
-- In progress (2026-11-07): both GPU sections now report a repeated build (all memory allocated before:
-  CPU `fillBasisTable`/`fillCurveTable`, GPU kernel only and upload/kernels/download into existing buffers)
-  and a one-off build (allocating inside: CPU constructors, GPU allocate + kernel, upload/build/download,
-  first call), each GPU row against the CPU row of the same kind. Not yet measured reliably: best of 5
-  runs is unstable for runs under a few ms (up to 2.7x on the CPU), so `bestOf` will run for a minimum
-  time first; the step 2b numbers in `docs/benchmarks.md` are from the version before this split.
+- Changed while measuring: each GPU row is compared with the CPU doing the same kind of build, a rebuild
+  (all memory allocated before; CPU `fillBasisTable`/`fillCurveTable`, added for this) or a build once
+  (allocating inside; CPU constructors). Host allocation of large tables costs as much as the build
+  itself (~37 ms for 64 MB) and depends on glibc's state, so mixing kinds made the comparison meaningless.
+- `bestOf` runs at least 5 times and 0.2 s: best of 5 was 1.5-2.7x off for runs of ~0.5 ms.
+- The result table is never freed in a timed region, but a build once's temporaries are (GPU incl. copies:
+  all device buffers, as the CPU `CurveTable(curve)` frees its `BasisTable`): up to ~1.2 ms at 100k spans.
+- The curve kernel is near its memory limit (~80% at 1M spans), 15-53x faster than one CPU core from 10k spans.
+- Curve table, whole job, rebuild: 6-10x faster than one CPU core (float); the copies take
+  ~80% at 1M spans (pageable memory, ~11 GB/s).
+- `cudaMalloc` maps a new 2 MB chunk when an allocation does not fit in an already mapped one (~130 us).
+- The printed output and `docs/benchmarks.md` show one comparison per row (same work on CPU and GPU, float and
+  double side by side, "Nx faster/slower"), with a legend, so they can be read without the code.

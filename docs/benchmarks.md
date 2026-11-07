@@ -149,6 +149,9 @@ The last section of `bench_curve_point` (only with CUDA) builds the `BasisTable`
 
 ### 2026-10-26, RTX 2000 Ada (sm_89) and AMD EPYC 7443 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds, float (double)
 
+Measured with the first version of the section (best of 5 runs, host allocation inside the GPU rows); see
+"GPU table builds" below for the current rows and the reasons they changed.
+
 | spans | CPU | GPU kernel only | GPU allocate + kernel | GPU upload, build, download | GPU first call |
 |---|---|---|---|---|---|
 | 97 | 4.2 (5.0) | 10.1 (25.4) | 14.9 (30.1) | 160 (179) | 245,503 (217) |
@@ -171,64 +174,134 @@ Observations:
   in global memory (p read/write passes over each row), and neighbouring threads write rows 64 bytes
   apart (uncoalesced). Next: confirm with `ncu`.
 
-## Curve table build, CPU vs GPU (`bench_curve_point` with CUDA, since 2026-11-07)
+## GPU table builds, CPU vs GPU (`bench_curve_point` with CUDA, since 2026-11-07)
 
-After the basis table, the same comparison for the `CurveTable` (`buildCurveTableOnDevice`, one thread per
-coefficient `(span, d)`, `src/gpu/curve_table_gpu.cu`), best of 5. The GPU curve kernel only replaces the
-second stage, so there are two CPU baselines:
+The last part of `bench_curve_point` builds the `BasisTable` and the `CurveTable` on the CPU (1 thread) and on
+the GPU (`src/gpu/basis_table_gpu.cu`, `curve_table_gpu.cu`). Each row compares the same work on both:
 
-- **CPU curve stage**: `CurveTable(basis, points)` with the basis table built before; compared with
-  **kernel only** (CUDA events around `fillCurveTableOnDevice`: kernel + device copy of the 1/h values)
-  and **allocate + kernel** (basis table and points already on the GPU);
-- **CPU full build**: `CurveTable(curve)`, basis table included; compared with **upload, build, download**
-  (upload knots and points, both GPU builds, download the curve table into host memory allocated before
-  the clock starts, see below) and **first call** (the same, the type's first time; the CUDA context already
-  exists, so this only adds loading the curve kernel).
+- **Rebuild**: memory allocated beforehand and reused, as in a program that rebuilds a table whenever the
+  curve changes. CPU: `fillBasisTable` / `fillCurveTable` into existing vectors.
+- **Build once**: the build allocates its own memory. CPU: the constructors. GPU: `cudaMalloc` and new host vectors.
+- GPU **computation only**: the kernel(s) on data already on the GPU (build once: also `cudaMalloc` of the
+  table). GPU **incl. copies**: upload the inputs, the kernel(s), download the table into CPU memory.
+- **First build in this program**: build once incl. copies, the first time. The program's first CUDA call
+  (float basis table) also starts CUDA; every other first build loads its kernel.
 
-### 2026-11-07, RTX A4500 (sm_86, 640 GB/s) and AMD EPYC 7352 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds, float (double)
+Sections: **basis table** (knots -> basis table); **curve table, stage 2 only** (basis table -> curve table,
+basis table already built: the work the curve kernel does); **curve table, whole job** (knots + control
+points -> curve table). The resulting table is never freed inside the timed region (the caller keeps it),
+but a build once's temporaries are, as a one-off build pays for them before it returns: the CPU
+`CurveTable(curve)` frees its `BasisTable`, the GPU incl. copies `cudaFree`s all its device buffers (its
+result is the downloaded host table). Every time is the best of at least 5 runs and 0.2 s (`bestOf`);
+first build is one run.
 
-| spans | CPU curve stage | GPU kernel only | GPU allocate + kernel | CPU full build | GPU upload, build, download | GPU first call |
-|---|---|---|---|---|---|---|
-| 97 | 1.5 (1.9) | 10.1 (9.6) | 15.2 (14.8) | 7.5 (8.5) | 190 (215) | 288 (229) |
-| 9,997 | 148 (188) | 9.5 (13.3) | 15.2 (155) | 766 (877) | 297 (502) | 367 (548) |
-| 99,997 | 1,586 (2,603) | 34 (68) | 258 (369) | 7,908 (10,113) | 1,247 (2,049) | 2,201 (2,643) |
-| 999,997 | 50,128 (89,556) | 277 (547) | 647 (828) | 154,881 (238,063) | 10,649 (20,653) | 11,166 (20,305) |
+### 2026-11-07, RTX A4500 (sm_86, 640 GB/s) and AMD EPYC 7352 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds
 
-Largest |GPU - CPU| coefficient: up to 1.8e-2 (float), 4.4e-11 (double) at 1M spans. These are absolute
-differences: the benchmark curve's coordinates grow to ~8e4, so this is ~2 ulp (FMA rounding, see step 2 in
-`docs/gpu-plan.md`).
+Each value is the median of three program runs. Rebuild rows agree within a few percent between runs.
+Build once rows include allocation and vary more, up to ~25%, and more for large double tables on the GPU
+(`cudaMalloc` of 64-128 MB). First builds are a single run per program run and vary most.
+
+Basis table (knots -> basis table):
+
+| spans | comparison | float CPU | float GPU | GPU is | double CPU | double GPU | GPU is |
+|---|---|---|---|---|---|---|---|
+| 97 | Rebuild, computation only | 6.3 | 12.6 | 2.0x slower | 6.8 | 29.4 | 4.3x slower |
+|  | Rebuild, incl. copies CPU <-> GPU | 6.3 | 27.6 | 4.4x slower | 6.8 | 45.0 | 6.6x slower |
+|  | Build once, computation only | 6.5 | 18.5 | 2.8x slower | 7.0 | 35.4 | 5.1x slower |
+|  | Build once, incl. copies CPU <-> GPU | 6.5 | 41.4 | 6.4x slower | 7.0 | 59.4 | 8.5x slower |
+|  | First build in this program | 6.5 | 169,766 | 26,118x slower | 7.0 | 431.3 | 62x slower |
+| 9,997 | Rebuild, computation only | 659.0 | 25.8 | 26x faster | 712.8 | 54.9 | 13x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 659.0 | 113.3 | 5.8x faster | 712.8 | 205.0 | 3.5x faster |
+|  | Build once, computation only | 669.6 | 32.2 | 21x faster | 732.7 | 60.8 | 12x faster |
+|  | Build once, incl. copies CPU <-> GPU | 669.6 | 142.8 | 4.7x faster | 732.7 | 246.8 | 3.0x faster |
+|  | First build in this program | 669.6 | 186,983 | 279x slower | 732.7 | 1,393 | 1.9x slower |
+| 99,997 | Rebuild, computation only | 6,643 | 141.3 | 47x faster | 7,171 | 316.6 | 23x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 6,643 | 696.5 | 9.5x faster | 7,171 | 1,370 | 5.2x faster |
+|  | Build once, computation only | 6,734 | 328.1 | 21x faster | 7,583 | 489.0 | 16x faster |
+|  | Build once, incl. copies CPU <-> GPU | 6,734 | 1,292 | 5.2x faster | 7,583 | 2,636 | 2.9x faster |
+|  | First build in this program | 6,734 | 179,216 | 27x slower | 7,583 | 10,108 | 1.3x slower |
+| 999,997 | Rebuild, computation only | 68,030 | 1,333 | 51x faster | 71,838 | 2,822 | 25x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 68,030 | 8,278 | 8.2x faster | 71,838 | 16,683 | 4.3x faster |
+|  | Build once, computation only | 103,639 | 2,286 | 45x faster | 144,074 | 3,630 | 40x faster |
+|  | Build once, incl. copies CPU <-> GPU | 103,639 | 47,683 | 2.2x faster | 144,074 | 90,484 | 1.6x faster |
+|  | First build in this program | 103,639 | 291,293 | 2.8x slower | 144,074 | 93,509 | 1.5x faster |
+
+Curve table, stage 2 only (basis table -> curve table; basis table already built):
+
+| spans | comparison | float CPU | float GPU | GPU is | double CPU | double GPU | GPU is |
+|---|---|---|---|---|---|---|---|
+| 97 | Rebuild, computation only | 1.3 | 8.8 | 6.8x slower | 1.5 | 9.1 | 6.1x slower |
+|  | Build once, computation only | 1.5 | 13.8 | 9.2x slower | 1.8 | 13.5 | 7.5x slower |
+| 9,997 | Rebuild, computation only | 133.7 | 9.1 | 15x faster | 154.3 | 11.6 | 13x faster |
+|  | Build once, computation only | 146.5 | 13.7 | 11x faster | 181.9 | 151.5 | 1.2x faster |
+| 99,997 | Rebuild, computation only | 1,387 | 32.9 | 42x faster | 1,784 | 61.2 | 29x faster |
+|  | Build once, computation only | 1,559 | 178.2 | 8.7x faster | 2,552 | 391.7 | 6.5x faster |
+| 999,997 | Rebuild, computation only | 14,499 | 274.4 | 53x faster | 18,564 | 553.3 | 34x faster |
+|  | Build once, computation only | 52,376 | 553.9 | 95x faster | 94,451 | 915.2 | 103x faster |
+
+Curve table, whole job (curve: knots + control points -> curve table):
+
+| spans | comparison | float CPU | float GPU | GPU is | double CPU | double GPU | GPU is |
+|---|---|---|---|---|---|---|---|
+| 97 | Rebuild, incl. copies CPU <-> GPU | 7.6 | 36.8 | 4.8x slower | 8.3 | 55.8 | 6.7x slower |
+|  | Build once, incl. copies CPU <-> GPU | 7.9 | 308.9 | 39x slower | 8.9 | 326.6 | 37x slower |
+|  | First build in this program | 7.9 | 546.2 | 69x slower | 8.9 | 438.6 | 49x slower |
+| 9,997 | Rebuild, incl. copies CPU <-> GPU | 793.5 | 136.3 | 5.8x faster | 867.5 | 251.1 | 3.5x faster |
+|  | Build once, incl. copies CPU <-> GPU | 818.6 | 418.7 | 2.0x faster | 915.2 | 765.2 | 1.2x faster |
+|  | First build in this program | 818.6 | 746.0 | 1.1x faster | 915.2 | 880.4 | 1.0x faster |
+| 99,997 | Rebuild, incl. copies CPU <-> GPU | 8,035 | 848.0 | 9.5x faster | 8,919 | 1,640 | 5.4x faster |
+|  | Build once, incl. copies CPU <-> GPU | 8,484 | 2,339 | 3.6x faster | 18,227 | 4,034 | 4.5x faster |
+|  | First build in this program | 8,484 | 6,501 | 1.3x faster | 18,227 | 11,908 | 1.5x faster |
+| 999,997 | Rebuild, incl. copies CPU <-> GPU | 81,361 | 9,753 | 8.3x faster | 91,353 | 18,410 | 5.0x faster |
+|  | Build once, incl. copies CPU <-> GPU | 163,481 | 53,379 | 3.1x faster | 251,664 | 98,615 | 2.6x faster |
+|  | First build in this program | 163,481 | 53,194 | 3.1x faster | 251,664 | 99,699 | 2.5x faster |
+
+Largest |GPU - CPU| coefficient: basis 2.4e-7 (float), 4.4e-16 (double); curve up to 1.8e-2 (float), 4.4e-11
+(double) at 1M spans. The curve's are absolute differences on coordinates up to ~8e4, so ~2 ulp (FMA rounding,
+see step 2 in `docs/gpu-plan.md`).
 
 Observations:
 
-- The kernel is 15x faster than the CPU curve stage at 10k spans, 46x at 100k and 180x (float) at 1M. It
-  is close to its memory limit, unlike the basis table kernel: at 1M spans it reads 64 MB of basis
-  table and 16 MB of points and writes 64 MB (float), ~225 us at 640 GB/s if each byte moves once,
-  against 277 us measured. One thread per coefficient with x-first numbering gives coalesced writes
-  (step 2), and this shows.
-- End to end the GPU is 6-15x faster than the CPU's full build from 100k spans, but the copies dominate:
-  at 1M spans the kernels take ~1 ms of 10.6 ms; the rest is uploading ~20 MB and downloading ~68 MB
-  (float) from/to pageable host memory.
+- Computation only: from 10k spans the curve kernel is 15-53x faster than the CPU (stage 2, float; double
+  13-34x), the basis kernel 26-51x. The curve kernel is close to its memory limit: at 1M spans it reads 64 MB of basis
+  table and 16 MB of points and writes 64 MB (float), ~225 us at 640 GB/s if each byte moves once, against
+  274 us measured. The basis kernel (1,333 us for 64 MB written) is not, as found in step 1.
+- Curve table, whole job, rebuild: GPU 6-10x faster than the CPU from 10k spans (float; double 3-6x). The copies dominate: at 1M spans the kernels take ~1.6 ms of 9.7 ms, the rest
+  is ~88 MB between pageable host memory and the GPU (~11 GB/s). Pinned host memory would be the next step
+  if this matters.
+- Curve table, whole job, build once: GPU 2.0-3.6x faster (float). Both sides pay for host memory here, and that is large: at 1M
+  spans allocating the curve table's 64 MB (float) costs the CPU ~38 ms (stage 2: 52.4 ms build once vs
+  14.5 ms rebuild), and the GPU about as much (53.4 vs 9.8 ms, with the `cudaFree`s of its temporaries). The first write to each new 4 KB page is a
+  page fault, ~2 us each.
+- How much allocation costs depends on glibc: blocks above its mmap threshold come fresh from the OS (page
+  faults again) each time, smaller ones are reused from its heap. Hence double at 100k spans: whole job
+  build once 18.2 ms vs rebuild 8.9 ms (two 12.8 MB tables), but float only 8.5 vs 8.0 ms (6.4 MB).
 - Allocation on the GPU (measured with a standalone `cudaMalloc`/`cudaFree` loop): the driver hands out
   device memory in 2 MB chunks. An allocation that fits in the free part of an already mapped chunk costs
   ~2 us; otherwise `cudaMalloc` maps a new chunk (~130 us, ~850 us for 32 MB) and `cudaFree` unmaps it
-  again (~110 us), every time. That is the ~140 us jump in allocate + kernel for double at 10k spans: it has
-  ~1.76 MB live (knots, points, basis table), so its 1.36 MB curve table needs a new chunk; float
-  (0.9 MB live + 0.68 MB) fits, and so does the basis table (only the knots live). Only the `cudaMalloc`
-  is timed (the table is freed after the clock stops). So: reuse tables (`fill...OnDevice`), or use a
-  memory pool (`cudaMallocAsync`), when builds are repeated.
+  again (~110 us), every time. Hence double's stage 2, build once, computation only at 10k spans (152 us vs 14 us for float): it
+  has ~1.76 MB live (knots, points, basis table), so its 1.36 MB curve table needs a new chunk; float
+  (0.9 MB + 0.68 MB) fits. So: reuse device tables (`fill...OnDevice`) or use a memory pool
+  (`cudaMallocAsync`) when builds are repeated.
+- Freeing the GPU's temporaries is not free either (`cudaFree` is synchronous and unmaps chunks it empties).
+  Timing them (old vs new binary, run alternately) added to build once incl. copies: basis table ~7 us at
+  97 spans, ~0.15-0.2 ms at 100k; curve table whole job ~120 us at 97 spans, ~0.7 ms (float) and ~1.2 ms
+  (double) at 100k, 2-5 ms (5-10%) at 1M.
 
-### Host memory is allocated outside the GPU timings (since 2026-11-07)
+### How the method got here (2026-11-07)
 
-The first version of this section downloaded into a new `std::vector` inside the timed region. Large host
-allocations cost a page fault per 4 KB page on first write, and freeing them can return the pages to the OS;
-whether glibc reuses memory or maps it fresh depends on what the program allocated and freed before. So
-those rows varied between runs and with glibc settings (`GLIBC_TUNABLES=glibc.malloc.mmap_threshold=...`
-moved GPU end-to-end at 100k spans from 3 to 10 ms) and were dominated by it at 1M spans: 45-55 ms
-(float) and 93-106 ms (double), against 10.6 and 20.7 ms now. The first call also looked faster than the
-best run, because later runs also freed the previous run's 64/128 MB result.
-
-Now both end-to-end timers download into host memory allocated and written once before timing (`HostTable`
-in the benchmark), and give the same results with either glibc setting. The CPU rows still include
-allocation, which is part of what the CPU constructors do; from ~100k spans they therefore also depend on
-the allocator's state (CPU full build at 100k spans, double: 10 or 23 ms between runs of different code).
-The basis table's end-to-end numbers above (RTX 2000 Ada, 2026-10-26) were measured the old way.
+- The first version of the curve section downloaded into a new `std::vector` inside the timed region, and
+  compared with the CPU constructors. Large host allocations made those rows vary between runs and with
+  glibc settings (`GLIBC_TUNABLES=glibc.malloc.mmap_threshold=...` moved GPU end-to-end at 100k spans from 3
+  to 10 ms) and the first call looked faster than the best run (later runs also freed the previous run's
+  64/128 MB result). Hence the split into rebuild and build once, with the CPU `fill` functions so that
+  both sides can build into existing memory.
+- Best of a fixed 5 runs was not enough for runs under a few ms: in a standalone test, best of 5 basis table
+  builds (10k spans, ~0.5 ms each) came out 1.5-2.7x too slow and differed between runs, best of 50 was
+  stable (probably the CPU clocking up after waiting for the GPU; not confirmed). Hence `bestOf` runs for at
+  least 0.2 s; it also applies to the table build times of the first section.
+- Until the free rule above, the GPU build once incl. copies stopped the clock before its device buffers
+  were freed, while the CPU `CurveTable(curve)` frees its temporary `BasisTable` inside the timed region.
+  The tables were re-measured then (median of three runs). Some build once rows of the earlier tables had
+  also gone stale after the measuring order changed (basis table, 97 spans, incl. copies: 172 us in the
+  earlier table, 35 us measured with the code just before the change).
