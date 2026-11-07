@@ -68,6 +68,13 @@ namespace geom
 	template <std::floating_point T>
 	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, BasisTable<T> const& table, T u);
 	
+	// Fills a whole basis table into memory the caller owns, without allocating: coefficients holds
+	// numSpans rows of (p + 1)^2 values and inverseSpanLengths numSpans values, numSpans = knots.size() - 2p - 1
+	// (layout as in BasisTable). Writes every value, so the memory need not be zeroed. The BasisTable
+	// constructor is allocation plus this; call it directly to rebuild a table into reused memory.
+	template <std::floating_point T>
+	void fillBasisTable(int degree, std::span<T const> knots, std::span<T> coefficients, std::span<T> inverseSpanLengths);
+	
 	namespace detail
 	{
 		// Fills row `row` (span j = row + p) of a basis table: its (p + 1)^2 coefficients in
@@ -92,11 +99,7 @@ namespace geom
 		m_coefficients(m_numSpans * (static_cast<std::size_t>(degree) + 1) * (static_cast<std::size_t>(degree) + 1)),
 		m_inverseSpanLengths(m_numSpans)
 	{
-		assert(degree >= 1 && degree <= kMaxDegree);
-		for (std::size_t row = 0; row < m_numSpans; ++row)
-		{
-			detail::buildBasisRow<T>(row, degree, knots, m_coefficients, m_inverseSpanLengths);
-		}
+		fillBasisTable<T>(degree, knots, m_coefficients, m_inverseSpanLengths);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -178,6 +181,21 @@ namespace geom
 	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, BasisTable<T> const& table, T u)
 	{
 		return curvePointFromTable<T>(curve.degree(), curve.knots(), curve.weightedControlPoints(), table.coefficients(), table.inverseSpanLengths(), u);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	void fillBasisTable(int degree, std::span<T const> knots, std::span<T> coefficients, std::span<T> inverseSpanLengths)
+	{
+		auto const p = static_cast<std::size_t>(degree);
+		std::size_t const numSpans = knots.size() - 2 * p - 1;
+		assert(degree >= 1 && degree <= kMaxDegree);
+		assert(coefficients.size() == numSpans * (p + 1) * (p + 1) && inverseSpanLengths.size() == numSpans);
+		for (std::size_t row = 0; row < numSpans; ++row)
+		{
+			detail::buildBasisRow<T>(row, degree, knots, coefficients, inverseSpanLengths);
+		}
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

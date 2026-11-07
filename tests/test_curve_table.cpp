@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -119,6 +121,23 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// fillCurveTable into memory full of NaN writes every value, as the constructor (which calls it) has
+	// them, also the zero row of the empty span at the double knot 4.
+	void testFillIntoExistingMemory()
+	{
+		NurbsCurve<double> const curve = rationalCurve<double>(2, {0, 0, 0, 1, 2, 3, 4, 4, 5, 5, 5});
+		BasisTable const basis(curve);
+		CurveTable const table(basis, curve.weightedControlPoints());
+		double const nan = std::numeric_limits<double>::quiet_NaN();
+		std::vector<Point4<double>> coefficients(table.coefficients().size(), Point4<double>{nan, nan, nan, nan});
+		std::vector<double> inverseSpanLengths(table.numSpans(), nan);
+		geom::fillCurveTable<double>(curve.degree(), basis.coefficients(), basis.inverseSpanLengths(), curve.weightedControlPoints(), coefficients, inverseSpanLengths);
+		CHECK(std::ranges::equal(coefficients, table.coefficients()));
+		CHECK(std::ranges::equal(inverseSpanLengths, table.inverseSpanLengths()));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	// float, p = 3: within float rounding of curve(u) in float.
 	void testFloat()
 	{
@@ -134,6 +153,7 @@ namespace
 		testBookExamples();
 		testMatchesCurvePoint();
 		testFromBasisTable();
+		testFillIntoExistingMemory();
 		testFloat();
 	}
 }  // namespace

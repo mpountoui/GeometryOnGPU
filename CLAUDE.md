@@ -12,7 +12,7 @@ CMake (>= 3.24). CUDA is optional: without a CUDA compiler the project builds CP
 Tests and benchmarks use `<print>`, so the host compiler must be GCC >= 14 (or a recent Clang/libc++);
 on the NVIDIA Linux boxes (Ubuntu 24.04, default GCC 13) install `g++-14` and configure with
 `-DCMAKE_CXX_COMPILER=g++-14` (a fresh build dir: CMake caches the compiler).
-All boxes have nvcc 12.8. The RTX A4000 (sm_86) and RTX 2000 Ada (sm_89) boxes work with `native`.
+All boxes have nvcc 12.8. The RTX A4000 / A4500 (sm_86) and RTX 2000 Ada (sm_89) boxes work with `native`.
 The B300 box (sm_103) does not,
 because nvcc 12.8 does not know sm_103: there also pass `-DCMAKE_CUDA_ARCHITECTURES=100`
 (sm_100 code runs on sm_103). Drop this once CUDA is >= 12.9.
@@ -26,7 +26,7 @@ cmake --build build                  # build
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
 ./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # benchmark (Release build; with CUDA also the GPU
-                                                             # basis table build); results in docs/benchmarks.md
+                                                             # basis and curve table builds); results in docs/benchmarks.md
 ```
 
 ## Architecture
@@ -43,6 +43,7 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   evaluates points from it, 1.2-2.5x faster than `curvePoint` on the CPU), `curve_table.hpp`
   (`CurveTable`: basis table times control points, the curve as one 4D polynomial per span;
   `curvePointFromCurveTable`, 2.7-15x faster than `curvePoint`; rebuild when control points change),
+  both also as `fillBasisTable`/`fillCurveTable` into caller-owned memory (the constructors = allocate + fill),
   `span_lookup.hpp` (`SpanLookup`: finds the span in O(1) with a cell table, same result as `findSpan`;
   with the curve table about 4 ns per point independent of the number of knots).
   Each has a doc in `docs/algorithms/`.

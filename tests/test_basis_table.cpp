@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -105,6 +107,21 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// fillBasisTable into memory full of NaN writes every value, as the constructor (which calls it) has
+	// them, also the zero row of the empty span at the double knot 4.
+	void testFillIntoExistingMemory()
+	{
+		NurbsCurve<double> const curve = rationalCurve<double>(2, {0, 0, 0, 1, 2, 3, 4, 4, 5, 5, 5});
+		BasisTable const table(curve);
+		std::vector<double> coefficients(table.coefficients().size(), std::numeric_limits<double>::quiet_NaN());
+		std::vector<double> inverseSpanLengths(table.numSpans(), std::numeric_limits<double>::quiet_NaN());
+		geom::fillBasisTable<double>(curve.degree(), curve.knots(), coefficients, inverseSpanLengths);
+		CHECK(std::ranges::equal(coefficients, table.coefficients()));
+		CHECK(std::ranges::equal(inverseSpanLengths, table.inverseSpanLengths()));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	// float, p = 3: within float rounding of curve(u) in float.
 	void testFloat()
 	{
@@ -120,6 +137,7 @@ namespace
 		testRowsMatchBasisPolynomials();
 		testBookExamples();
 		testMatchesCurvePoint();
+		testFillIntoExistingMemory();
 		testFloat();
 	}
 }  // namespace

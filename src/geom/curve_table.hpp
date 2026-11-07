@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <concepts>
 #include <cstddef>
@@ -81,6 +82,13 @@ namespace geom
 	template <std::floating_point T>
 	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, SpanLookup<T> const& lookup, T u);
 	
+	// Fills a whole curve table into memory the caller owns, without allocating, from a basis table's two
+	// arrays and the curve's numSpans + p weighted points: coefficients holds numSpans rows of p + 1 points,
+	// inverseSpanLengths numSpans values (copied from the basis table). Writes every value. The CurveTable
+	// constructor is allocation plus this; call it directly to rebuild a table into reused memory.
+	template <std::floating_point T>
+	void fillCurveTable(int degree, std::span<T const> basisCoefficients, std::span<T const> basisInverseSpanLengths, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients, std::span<T> inverseSpanLengths);
+	
 	namespace detail
 	{
 		// Computes one coefficient of a curve table, A_j[d] = sum_r c(r, d) Pw[row + r] of row `row`
@@ -97,23 +105,14 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// A curve has n + 1 = numSpans + p control points.
 	template <std::floating_point T>
 	CurveTable<T>::CurveTable(BasisTable<T> const& basis, std::span<Point4<T> const> weightedPoints)
 		: m_degree(basis.degree()),
 		m_numSpans(basis.numSpans()),
 		m_coefficients(basis.numSpans() * (static_cast<std::size_t>(basis.degree()) + 1)),
-		m_inverseSpanLengths(basis.inverseSpanLengths().begin(), basis.inverseSpanLengths().end())
+		m_inverseSpanLengths(basis.numSpans())
 	{
-		auto const p = static_cast<std::size_t>(m_degree);
-		assert(weightedPoints.size() == m_numSpans + p);
-		for (std::size_t row = 0; row < m_numSpans; ++row)
-		{
-			for (std::size_t d = 0; d <= p; ++d)
-			{
-				detail::buildCurveCoefficient<T>(row, d, m_degree, basis.coefficients(), weightedPoints, m_coefficients);
-			}
-		}
+		fillCurveTable<T>(m_degree, basis.coefficients(), basis.inverseSpanLengths(), weightedPoints, m_coefficients, m_inverseSpanLengths);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -210,6 +209,26 @@ namespace geom
 	{
 		std::size_t const span = lookup.find(curve.knots(), u);
 		return curvePointFromCurveTable<T>(curve.degree(), curve.knots(), table.coefficients(), table.inverseSpanLengths(), span, u);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// numSpans comes from the basis table; a curve has n + 1 = numSpans + p control points.
+	template <std::floating_point T>
+	void fillCurveTable(int degree, std::span<T const> basisCoefficients, std::span<T const> basisInverseSpanLengths, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients, std::span<T> inverseSpanLengths)
+	{
+		auto const p = static_cast<std::size_t>(degree);
+		std::size_t const numSpans = basisInverseSpanLengths.size();
+		assert(basisCoefficients.size() == numSpans * (p + 1) * (p + 1) && weightedPoints.size() == numSpans + p);
+		assert(coefficients.size() == numSpans * (p + 1) && inverseSpanLengths.size() == numSpans);
+		for (std::size_t row = 0; row < numSpans; ++row)
+		{
+			for (std::size_t d = 0; d <= p; ++d)
+			{
+				detail::buildCurveCoefficient<T>(row, d, degree, basisCoefficients, weightedPoints, coefficients);
+			}
+		}
+		std::copy(basisInverseSpanLengths.begin(), basisInverseSpanLengths.end(), inverseSpanLengths.begin());
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

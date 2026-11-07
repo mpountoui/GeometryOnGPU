@@ -170,3 +170,65 @@ Observations:
   it is limited by memory access, not arithmetic. Suspects: the in-place recurrence works on the table
   in global memory (p read/write passes over each row), and neighbouring threads write rows 64 bytes
   apart (uncoalesced). Next: confirm with `ncu`.
+
+## Curve table build, CPU vs GPU (`bench_curve_point` with CUDA, since 2026-11-07)
+
+After the basis table, the same comparison for the `CurveTable` (`buildCurveTableOnDevice`, one thread per
+coefficient `(span, d)`, `src/gpu/curve_table_gpu.cu`), best of 5. The GPU curve kernel only replaces the
+second stage, so there are two CPU baselines:
+
+- **CPU curve stage**: `CurveTable(basis, points)` with the basis table built before; compared with
+  **kernel only** (CUDA events around `fillCurveTableOnDevice`: kernel + device copy of the 1/h values)
+  and **allocate + kernel** (basis table and points already on the GPU);
+- **CPU full build**: `CurveTable(curve)`, basis table included; compared with **upload, build, download**
+  (upload knots and points, both GPU builds, download the curve table into host memory allocated before
+  the clock starts, see below) and **first call** (the same, the type's first time; the CUDA context already
+  exists, so this only adds loading the curve kernel).
+
+### 2026-11-07, RTX A4500 (sm_86, 640 GB/s) and AMD EPYC 7352 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds, float (double)
+
+| spans | CPU curve stage | GPU kernel only | GPU allocate + kernel | CPU full build | GPU upload, build, download | GPU first call |
+|---|---|---|---|---|---|---|
+| 97 | 1.5 (1.9) | 10.1 (9.6) | 15.2 (14.8) | 7.5 (8.5) | 190 (215) | 288 (229) |
+| 9,997 | 148 (188) | 9.5 (13.3) | 15.2 (155) | 766 (877) | 297 (502) | 367 (548) |
+| 99,997 | 1,586 (2,603) | 34 (68) | 258 (369) | 7,908 (10,113) | 1,247 (2,049) | 2,201 (2,643) |
+| 999,997 | 50,128 (89,556) | 277 (547) | 647 (828) | 154,881 (238,063) | 10,649 (20,653) | 11,166 (20,305) |
+
+Largest |GPU - CPU| coefficient: up to 1.8e-2 (float), 4.4e-11 (double) at 1M spans. These are absolute
+differences: the benchmark curve's coordinates grow to ~8e4, so this is ~2 ulp (FMA rounding, see step 2 in
+`docs/gpu-plan.md`).
+
+Observations:
+
+- The kernel is 15x faster than the CPU curve stage at 10k spans, 46x at 100k and 180x (float) at 1M. It
+  is close to its memory limit, unlike the basis table kernel: at 1M spans it reads 64 MB of basis
+  table and 16 MB of points and writes 64 MB (float), ~225 us at 640 GB/s if each byte moves once,
+  against 277 us measured. One thread per coefficient with x-first numbering gives coalesced writes
+  (step 2), and this shows.
+- End to end the GPU is 6-15x faster than the CPU's full build from 100k spans, but the copies dominate:
+  at 1M spans the kernels take ~1 ms of 10.6 ms; the rest is uploading ~20 MB and downloading ~68 MB
+  (float) from/to pageable host memory.
+- Allocation on the GPU (measured with a standalone `cudaMalloc`/`cudaFree` loop): the driver hands out
+  device memory in 2 MB chunks. An allocation that fits in the free part of an already mapped chunk costs
+  ~2 us; otherwise `cudaMalloc` maps a new chunk (~130 us, ~850 us for 32 MB) and `cudaFree` unmaps it
+  again (~110 us), every time. That is the ~140 us jump in allocate + kernel for double at 10k spans: it has
+  ~1.76 MB live (knots, points, basis table), so its 1.36 MB curve table needs a new chunk; float
+  (0.9 MB live + 0.68 MB) fits, and so does the basis table (only the knots live). Only the `cudaMalloc`
+  is timed (the table is freed after the clock stops). So: reuse tables (`fill...OnDevice`), or use a
+  memory pool (`cudaMallocAsync`), when builds are repeated.
+
+### Host memory is allocated outside the GPU timings (since 2026-11-07)
+
+The first version of this section downloaded into a new `std::vector` inside the timed region. Large host
+allocations cost a page fault per 4 KB page on first write, and freeing them can return the pages to the OS;
+whether glibc reuses memory or maps it fresh depends on what the program allocated and freed before. So
+those rows varied between runs and with glibc settings (`GLIBC_TUNABLES=glibc.malloc.mmap_threshold=...`
+moved GPU end-to-end at 100k spans from 3 to 10 ms) and were dominated by it at 1M spans: 45-55 ms
+(float) and 93-106 ms (double), against 10.6 and 20.7 ms now. The first call also looked faster than the
+best run, because later runs also freed the previous run's 64/128 MB result.
+
+Now both end-to-end timers download into host memory allocated and written once before timing (`HostTable`
+in the benchmark), and give the same results with either glibc setting. The CPU rows still include
+allocation, which is part of what the CPU constructors do; from ~100k spans they therefore also depend on
+the allocator's state (CPU full build at 100k spans, double: 10 or 23 ms between runs of different code).
+The basis table's end-to-end numbers above (RTX 2000 Ada, 2026-10-26) were measured the old way.

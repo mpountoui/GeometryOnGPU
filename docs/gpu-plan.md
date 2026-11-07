@@ -18,6 +18,7 @@ Update the status column when a step is done, and record agreed decisions below.
 | 1b | GPU basis table build in `bench_curve_point`: kernel only (CUDA events), build, end to end, first call | Asynchronous launches, CUDA events, warm-up | done 2026-10-26 |
 | 1c | Profile the basis table kernel with `ncu`: confirm why it is ~10x slower than its memory limit | Nsight Compute, memory throughput, coalescing | postponed: profile with step 2's kernel |
 | 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | done 2026-11-01 |
+| 2b | GPU curve table build in `bench_curve_point`, as in step 1b, against the CPU curve stage and the full CPU build | Choosing a fair baseline | done 2026-11-07 |
 | 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | |
 | 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | |
 | 5 | Basis table kernel with one block per span, levels in shared memory | `__shared__`, `__syncthreads()`, warps | |
@@ -92,7 +93,7 @@ Findings (2026-10-26, RTX 2000 Ada):
 - Test `test_curve_table_gpu.cpp`: GPU basis table + GPU curve table against the CPU `CurveTable`, same curves
   as step 1, float and double, ulp tolerance per row; `dirtyDeviceMemory` and `checkRow` move to a shared
   test header.
-- No benchmark in this step (step 4 measures all precomputation).
+- No benchmark in this step (step 4 measures all precomputation); added after all in step 2b.
 
 Findings (2026-11-01, RTX A4000):
 
@@ -101,3 +102,30 @@ Findings (2026-11-01, RTX A4000):
   not with A_j[d]). That is the step 1 basis table error plus FMA in the sum. With `--fmad=false` both
   tables are bit-identical. Test tolerance: 16.
 - 1/h is bit-identical (copied). A kernel that skips one coefficient per row fails the test (NaN fill).
+
+## Step 2b: agreed decisions (implemented)
+
+- New section in `bench_curve_point` after the basis table one, same pattern (float and double, best of 5,
+  `GpuCurveBuild`). Two CPU baselines, so each GPU row is compared with the same work: the CPU curve stage
+  alone (`CurveTable(basis, points)`, basis table built before) for kernel only and allocate + kernel; the
+  full `CurveTable(curve)` for upload/build/download and first call.
+- Kernel only includes the device-to-device copy of 1/h inside `fillCurveTableOnDevice` (same stream).
+- All GPU sections are measured before anything is printed, so float's first basis table call still
+  pays for the CUDA context.
+
+Findings (2026-11-07, RTX A4500; details in `docs/benchmarks.md`):
+
+- The kernel is near its memory limit (~80% at 1M spans), 15-180x faster than one CPU core from 10k spans.
+- End to end (curve in host memory to table in host memory) 6-15x faster than the full CPU build from 100k
+  spans; the copies dominate (~1 ms of kernels in 10.6 ms at 1M spans, float).
+- Some `allocate + kernel` cases cost ~140 us more than the kernel: `cudaMalloc` maps a new 2 MB chunk
+  when the allocation does not fit in an already mapped one.
+- Changed after measuring: the end-to-end timers (also the basis table's) download into host memory
+  allocated before the clock starts. Allocating and freeing large host vectors inside the timed region
+  cost up to ~35 ms (float) / ~80 ms (double) at 1M spans and varied with glibc's state.
+- In progress (2026-11-07): both GPU sections now report a repeated build (all memory allocated before:
+  CPU `fillBasisTable`/`fillCurveTable`, GPU kernel only and upload/kernels/download into existing buffers)
+  and a one-off build (allocating inside: CPU constructors, GPU allocate + kernel, upload/build/download,
+  first call), each GPU row against the CPU row of the same kind. Not yet measured reliably: best of 5
+  runs is unstable for runs under a few ms (up to 2.7x on the CPU), so `bestOf` will run for a minimum
+  time first; the step 2b numbers in `docs/benchmarks.md` are from the version before this split.
