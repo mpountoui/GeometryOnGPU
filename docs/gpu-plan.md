@@ -23,10 +23,11 @@ Update the status column when a step is done, and record agreed decisions below.
 | 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | done 2026-11-08 |
 | 3b | GPU span lookup build in `bench_curve_point`, as in steps 1b and 2b; CPU `fillSpanLookup` for the rebuild rows | Comparing a parallel algorithm with a sequential one | done 2026-11-08 |
 | 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | done 2026-11-08 |
+| 4b | Queries on the GPU one at a time (`curve_points_gpu`), and threaded CPU precomputation, in `bench_curve_point` | Latency of one launch and a blocking download | done 2026-11-08 |
 | 5 | Basis table kernel with one block per span, levels in shared memory | `__shared__`, `__syncthreads()`, warps | |
 | 6 | Fuse kernels, several spans per block, float vs double, profiling | Occupancy, `nsys`/`ncu` | |
 
-Later: queries on the GPU ("Running queries on the GPU" in `basis-polynomials.md`).
+Later: batched queries on the GPU ("Running queries on the GPU" in `basis-polynomials.md`).
 
 ## CPU baseline (2026-10-26, AMD EPYC 7443, 1 thread, g++-14 -O3, p = 3, float)
 
@@ -195,3 +196,17 @@ Findings (2026-11-08, RTX 4000 Ada, numbers in `docs/benchmarks.md`):
   CPU quota of 13.6; with 128 threads an empty OpenMP region averaged ~12 ms even with active waiting.
 - Against 13 CPU threads the GPU wins on computation alone (float: 2.4-3.0x from 10k spans) but loses with copies (1.8-2.3x).
   At 1M spans copies are ~79% of the GPU's time. So the results should stay on the GPU: the next gain is queries there.
+
+## Step 4b: agreed decisions (implemented)
+
+- Queries arrive one by one, as in a real program, so nothing is batched: on the GPU, one kernel launch per `u`.
+  `u` is a kernel argument, so it needs no buffer; the result is one `Point3` in a buffer of size one, downloaded per query.
+- `evaluateCurvePointOnDevice` (`src/gpu/curve_points_gpu.cu`) calls `findSpanWithLookup` and `curvePointFromCurveTable`, the same `GEOM_HD`
+  functions as the CPU query. Only curve table + lookup: basis-table queries on the GPU would add a kernel nobody would choose.
+- CPU queries stay on one thread, for the same reason. Threads are used only to build the tables.
+- `bench_curve_point` needs CUDA and OpenMP only for those rows; both stay optional. The OpenMP loops moved to `benchmarks/bench_threaded.hpp`.
+
+Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
+
+- About 10 us per query at any curve size, ~800x slower than the CPU's lookup: the launch and the blocking download dominate.
+  One-at-a-time queries are not worth running on the GPU. Batches would pay one launch for many points; not measured yet.

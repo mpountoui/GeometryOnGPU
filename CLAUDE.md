@@ -25,7 +25,8 @@ cmake --build build                  # build
 ./build/geometry_on_gpu --svg [dir]  # write demo curve images (default: build/svg/)
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
-./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # queries on the CPU (Release build); results in docs/benchmarks.md
+./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # queries one at a time (Release build; with OpenMP also threaded
+                                                             # table builds, with CUDA also queries on the GPU); results in docs/benchmarks.md
 ./build/bench_precompute [degree] [--knots K]                 # CUDA + OpenMP: each table's build and the whole
                                                              # precomputation, CPU vs GPU; results in docs/benchmarks.md
 ```
@@ -67,6 +68,7 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   table) = `buildBasisTableOnDevice`; one thread per span; result kept in device memory as `DeviceBasisTable`),
   `inverse_span_lengths_gpu.hpp/.cu` builds the 1 / h array as a plain `DeviceBuffer<T>` the caller owns,
   `span_lookup_gpu.hpp/.cu` builds a `SpanLookup` (`DeviceSpanLookup`; one thread per cell, each with its own `findSpan`),
+  `curve_points_gpu.hpp/.cu` evaluates one point on the GPU from those tables (one launch per `u`),
   and `curve_table_gpu.hpp/.cu` builds a `CurveTable` from a `DeviceBasisTable` and the control points
   (same allocate/fill/build split; one thread per coefficient `(span, d)` in 2D blocks; `DeviceCurveTable`).
   Pattern: the `.hpp` declares a host function with no CUDA syntax (so `.cpp` files can call it),

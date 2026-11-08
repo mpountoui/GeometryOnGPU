@@ -533,3 +533,71 @@ Observations:
   go back to the CPU.
 - Control points changed, computation only: the GPU is 2.3-10x faster than 13 CPU threads in float from 10k spans.
 - These results depend on the 13-thread quota of this container: more threads would narrow or remove the GPU's lead.
+
+## Queries one at a time: threaded precomputation and queries on the GPU (`bench_curve_point`, since 2026-11-08)
+
+In a real program the parameters arrive one by one, not as a known batch. So every method evaluates one `u` at a time, and the
+CPU queries stay on one thread. `bench_curve_point` adds two cases to direct, basis, curve and lookup:
+
+- **Threaded precomputation** ("N threads", with OpenMP): the same tables as the 1-thread rows, built with all usable threads
+  (13 here, see "Whole precomputation"), allocation included. The queries are unchanged, so only the build time and "pays off after" change.
+- **gpu** (with CUDA): the 1 / h, basis, curve and lookup kernels, nothing downloaded. Per point: one kernel launch with one thread, `u`
+  as the kernel's argument, then a blocking download of the point. Because each query waits for the GPU, at most 10,000 points are
+  measured (`kGpuQueries`), and the time is scaled per point. The "gpu" build row includes uploading knots and control points.
+
+### 2026-11-08, RTX 4000 Ada (sm_89) and AMD EPYC 7702 (container quota 13.6 CPUs, so 13 threads), g++-14 -O3, nvcc 12.8, p = 3, N = 1,000,000 (gpu: 10,000)
+
+Each value is the median of three program runs.
+
+Time per point [ns], best of 5 runs (median of three program runs):
+
+| spans | direct float | double | basis float | double | curve float | double | lookup float | double | gpu float | double |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 97 | 35.6 | 32.6 | 26.6 | 20.6 | 12.1 | 11.1 | 12.6 | 10.6 | 10,146 | 10,441 |
+| 9,997 | 42.1 | 39.2 | 34.4 | 26.5 | 18.5 | 17.4 | 12.6 | 10.6 | 10,155 | 10,532 |
+| 99,997 | 53.1 | 48.7 | 41.2 | 34.2 | 28.1 | 27.8 | 12.7 | 10.7 | 10,135 | 10,493 |
+| 999,997 | 76.0 | 73.1 | 67.2 | 66.1 | 51.3 | 56.9 | 13.0 | 13.6 | 10,154 | 10,555 |
+
+Precomputation: build [us] (float / double) and pays off after, float:
+
+| spans | row | build float [us] | build double [us] | pays off after (float) | pays off after (double) |
+|---|---|---|---|---|---|
+| 97 | basis | 6.3 | 6.9 | 694 points | 577 points |
+|  | curve | 7.6 | 8.8 | 322 points | 409 points |
+|  | lookup | 8.0 | 9.2 | 348 points | 416 points |
+|  | basis, 13 threads | 10.2 | 11.2 | 1,125 points | 933 points |
+|  | curve, 13 threads | 16.6 | 18.6 | 708 points | 865 points |
+|  | lookup, 13 threads | 20.9 | 22.8 | 911 points | 1,032 points |
+|  | gpu | 235.5 | 241.6 | never | never |
+| 9,997 | basis | 645.5 | 722.3 | 83,713 points | 56,963 points |
+|  | curve | 781.3 | 905.2 | 33,170 points | 41,539 points |
+|  | lookup | 821.0 | 937.5 | 27,844 points | 32,875 points |
+|  | basis, 13 threads | 82.9 | 108.3 | 11,101 points | 8,537 points |
+|  | curve, 13 threads | 206.6 | 301.9 | 8,772 points | 13,851 points |
+|  | lookup, 13 threads | 218.8 | 317.0 | 7,420 points | 11,129 points |
+|  | gpu | 274.6 | 636.3 | never | never |
+| 99,997 | basis | 6,519 | 7,426 | 547,079 points | 509,374 points |
+|  | curve | 8,055 | 10,332 | 322,376 points | 494,219 points |
+|  | lookup | 8,482 | 10,659 | 209,850 points | 280,204 points |
+|  | basis, 13 threads | 925.3 | 1,482 | 77,280 points | 101,826 points |
+|  | curve, 13 threads | 1,699 | 2,954 | 68,265 points | 141,597 points |
+|  | lookup, 13 threads | 1,809 | 3,051 | 44,794 points | 80,205 points |
+|  | gpu | 1,469 | 2,147 | never | never |
+| 999,997 | basis | 99,035 | 140,828 | 11,307,129 points | 21,069,194 points |
+|  | curve | 155,724 | 244,175 | 6,313,651 points | 15,127,612 points |
+|  | lookup | 160,080 | 247,572 | 2,541,666 points | 4,164,665 points |
+|  | basis, 13 threads | 41,035 | 77,446 | 4,685,066 points | 11,656,053 points |
+|  | curve, 13 threads | 95,414 | 179,795 | 3,918,646 points | 11,139,030 points |
+|  | lookup, 13 threads | 96,299 | 180,686 | 1,528,921 points | 3,039,504 points |
+|  | gpu | 6,477 | 10,490 | never | never |
+
+Observations:
+
+- **A query on the GPU takes about 10 us, one at a time**, whatever the curve size (float 10.1-10.2 us, double 10.4-10.6 us). That is the
+  round trip: a kernel launch and a blocking download, not the evaluation. It is about 800x slower than the CPU's lookup (float,
+  12.6-13.0 ns), and slower than even the direct method, so the GPU "never" pays off for queries one at a time.
+- Building on the GPU is fast, and it is where the GPU helps: at 1M spans, 6.5 ms (float) against 96 ms with 13 CPU threads and 160 ms with one.
+- The largest gain from threads in these rows comes at 10k-100k spans: 3.7-4.7x faster for curve + lookup (float), and the break-even drops by about the
+  same factor. At 1M spans only ~1.7x, because these are build-once rows: allocating the large host vectors is single-threaded
+  (compare the 6.3 ms of the rebuild in "Whole precomputation", where memory is allocated beforehand).
+- At 97 spans threads make the build slower (20.9 us against 8.0 us for lookup, float), as in "Whole precomputation".

@@ -112,7 +112,7 @@ geom_enable_warnings(viz)
 # template) and CudaEvent (GPU timing); and the kernels (.cu files, compiled by nvcc).
 # PUBLIC CUDA::cudart: whatever links "gpu" can include <cuda_runtime.h> and call the CUDA runtime too.
 if(GEOM_HAS_CUDA)
-	add_library(gpu STATIC src/gpu/cuda_check.cpp src/gpu/cuda_event.cpp src/gpu/basis_table_gpu.cu src/gpu/curve_table_gpu.cu src/gpu/inverse_span_lengths_gpu.cu src/gpu/span_lookup_gpu.cu)
+	add_library(gpu STATIC src/gpu/cuda_check.cpp src/gpu/cuda_event.cpp src/gpu/basis_table_gpu.cu src/gpu/curve_table_gpu.cu src/gpu/inverse_span_lengths_gpu.cu src/gpu/span_lookup_gpu.cu src/gpu/curve_points_gpu.cu)
 	target_compile_features(gpu PRIVATE cxx_std_23)
 	target_include_directories(gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 	target_link_libraries(gpu PUBLIC geom CUDA::cudart)
@@ -149,11 +149,20 @@ target_compile_features(bench_curve_point PRIVATE cxx_std_23)
 target_link_libraries(bench_curve_point PRIVATE geom viz)
 geom_enable_warnings(bench_curve_point)
 
+# Optional parts of bench_curve_point: tables built with threads (OpenMP) and queries on the GPU (CUDA).
+find_package(OpenMP COMPONENTS CXX)
+if(OpenMP_CXX_FOUND)
+	target_link_libraries(bench_curve_point PRIVATE OpenMP::OpenMP_CXX)
+endif()
+if(GEOM_HAS_CUDA)
+	target_compile_definitions(bench_curve_point PRIVATE GEOM_HAS_CUDA=1)
+	target_link_libraries(bench_curve_point PRIVATE gpu)
+endif()
+
 # All precomputation: each table on one CPU thread against the GPU, and the whole job with CPU threads
 # (OpenMP) against the GPU. Only with CUDA, and only if the
 # compiler has OpenMP; it is linked into this benchmark alone.
 if(GEOM_HAS_CUDA)
-	find_package(OpenMP COMPONENTS CXX)
 	if(OpenMP_CXX_FOUND)
 		add_executable(bench_precompute benchmarks/bench_precompute.cpp benchmarks/bench_table_builds.cpp)
 		target_compile_features(bench_precompute PRIVATE cxx_std_23)
@@ -199,5 +208,6 @@ if(GEOM_HAS_CUDA)
 	geom_add_test(curve_table_gpu gpu)
 	geom_add_test(inverse_span_lengths_gpu gpu)
 	geom_add_test(span_lookup_gpu gpu)
+	geom_add_test(curve_points_gpu gpu)
 	geom_add_test(cuda_event gpu)
 endif()

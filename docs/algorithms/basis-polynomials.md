@@ -179,7 +179,7 @@ shared by curves with the same knot vector. Measured on the CPU (docs/benchmarks
 on the degree. What remains is mostly the span search; `SpanLookup` (`docs/algorithms/span-lookup.md`)
 replaces it, for about 4 ns per point at any number of knots.
 
-## Running queries on the GPU (planned)
+## Running queries on the GPU (one at a time implemented, batches planned)
 
 Two ways to run queries, to be measured against each other (and against `curvePoint`):
 
@@ -187,6 +187,9 @@ Two ways to run queries, to be measured against each other (and against `curvePo
 2. **Device:** keep the table on the GPU, upload a batch of `u`, one thread per `u`, download
    the points. Each batch pays a fixed launch + copy latency (microseconds), so this should
    only pay off for large batches. The benchmark should find where the two cross over.
+
+Queries one at a time are implemented (`evaluateCurvePointOnDevice`, curve table + lookup, one launch and one download per point).
+They take about 10 us each at any curve size (`docs/benchmarks.md`), so they lose to the CPU by a wide margin.
 
 ## Benchmarks (planned)
 
