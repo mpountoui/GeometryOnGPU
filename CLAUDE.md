@@ -26,7 +26,7 @@ cmake --build build                  # build
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
 ./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # benchmark (Release build; with CUDA also the GPU
-                                                             # basis and curve table builds); results in docs/benchmarks.md
+                                                             # table builds); results in docs/benchmarks.md
 ```
 
 ## Architecture
@@ -46,7 +46,7 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   both also as `fillBasisTable`/`fillCurveTable` into caller-owned memory (the constructors = allocate + fill),
   `inverse_span_lengths.hpp` (the 1 / h of every span: one caller-owned array per knot vector, in no table,
   used only by queries, so `curvePointFromTable(curve, table, invH, u)`),
-  `span_lookup.hpp` (`SpanLookup`: finds the span in O(1) with a cell table, same result as `findSpan`;
+  `span_lookup.hpp` (`SpanLookup`, `fillSpanLookup`: finds the span in O(1) with a cell table, same result as `findSpan`;
   with the curve table about 4 ns per point independent of the number of knots).
   Each has a doc in `docs/algorithms/`.
   Functions callable from kernels are marked `GEOM_HD` (`host_device.hpp`). They may use
@@ -65,6 +65,7 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   (`allocateBasisTableOnDevice` + `fillBasisTableOnDevice` (launch only, so it can be timed and reuse a
   table) = `buildBasisTableOnDevice`; one thread per span; result kept in device memory as `DeviceBasisTable`),
   `inverse_span_lengths_gpu.hpp/.cu` builds the 1 / h array as a plain `DeviceBuffer<T>` the caller owns,
+  `span_lookup_gpu.hpp/.cu` builds a `SpanLookup` (`DeviceSpanLookup`; one thread per cell, each with its own `findSpan`),
   and `curve_table_gpu.hpp/.cu` builds a `CurveTable` from a `DeviceBasisTable` and the control points
   (same allocate/fill/build split; one thread per coefficient `(span, d)` in 2D blocks; `DeviceCurveTable`).
   Pattern: the `.hpp` declares a host function with no CUDA syntax (so `.cpp` files can call it),

@@ -65,28 +65,6 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// A random clamped knot vector of the degree on [0, 1]: up to 12 distinct interior knots, each
-	// repeated 1..degree times.
-	std::vector<double> randomKnots(int degree, std::mt19937& random)
-	{
-		std::uniform_int_distribution<int> distinct(0, 12);
-		std::uniform_int_distribution<int> multiplicity(1, degree);
-		std::uniform_real_distribution<double> position(0.0, 1.0);
-		std::vector<double> interior{};
-		int const count = distinct(random);
-		for (int i = 0; i < count; ++i)
-		{
-			interior.insert(interior.end(), static_cast<std::size_t>(multiplicity(random)), position(random));
-		}
-		std::ranges::sort(interior);
-		std::vector<double> knots(static_cast<std::size_t>(degree) + 1, 0.0);
-		knots.insert(knots.end(), interior.begin(), interior.end());
-		knots.insert(knots.end(), static_cast<std::size_t>(degree) + 1, 1.0);
-		return knots;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
 	// The example of the doc: p = 2, knots {0,0,0, 0.1, 0.15, 0.6, 1,1,1}, one cell per span gives
 	// 4 cells of width 0.25 with first spans {2, 4, 4, 5}.
 	void testDocExample()
@@ -126,7 +104,7 @@ namespace
 		{
 			for (int trial = 0; trial < 300; ++trial)
 			{
-				std::vector<double> const knots = randomKnots(degree, random);
+				std::vector<double> const knots = test::randomKnots(degree, random);
 				checkMatchesFindSpan(degree, knots, random);
 				checkMatchesFindSpan(degree, std::vector<float>(knots.begin(), knots.end()), random);
 			}
@@ -151,11 +129,25 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// fillSpanLookup into memory full of 0xFFFFFFFF writes every cell, as the constructor (which calls it)
+	// has them.
+	void testFillIntoExistingMemory()
+	{
+		Values const knots{0, 0, 0, 1, 2, 3, 4, 4, 5, 5, 5};
+		SpanLookup<double> const lookup(2, knots);
+		std::vector<std::uint32_t> cells(lookup.firstSpans().size(), 0xFFFFFFFF);
+		geom::fillSpanLookup<double>(2, knots, lookup.start(), lookup.cellsPerUnit(), cells);
+		CHECK(std::ranges::equal(cells, lookup.firstSpans()));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	void runAllTests()
 	{
 		testDocExample();
 		testSpecialKnots();
 		testRandomKnots();
+		testFillIntoExistingMemory();
 		testCurvePoints();
 	}
 }  // namespace

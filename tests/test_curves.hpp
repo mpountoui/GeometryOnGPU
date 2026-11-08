@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <random>
 #include <vector>
 
 #include "check.hpp"
@@ -31,6 +33,10 @@ namespace test
 	// Clamped knots of the degree with numInterior evenly spaced interior knots in (0, 1).
 	template <typename T>
 	std::vector<T> uniformKnots(int degree, int numInterior);
+	
+	// A random clamped knot vector of the degree on [0, 1]: up to 12 distinct interior knots, each
+	// repeated 1..degree times.
+	inline std::vector<double> randomKnots(int degree, std::mt19937& random);
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -91,6 +97,26 @@ namespace test
 			knots.push_back(static_cast<T>(k) / static_cast<T>(numInterior + 1));
 		}
 		knots.insert(knots.end(), static_cast<std::size_t>(degree) + 1, T{1});
+		return knots;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	inline std::vector<double> randomKnots(int degree, std::mt19937& random)
+	{
+		std::uniform_int_distribution<int> distinct(0, 12);
+		std::uniform_int_distribution<int> multiplicity(1, degree);
+		std::uniform_real_distribution<double> position(0.0, 1.0);
+		std::vector<double> interior{};
+		int const count = distinct(random);
+		for (int i = 0; i < count; ++i)
+		{
+			interior.insert(interior.end(), static_cast<std::size_t>(multiplicity(random)), position(random));
+		}
+		std::ranges::sort(interior);
+		std::vector<double> knots(static_cast<std::size_t>(degree) + 1, 0.0);
+		knots.insert(knots.end(), interior.begin(), interior.end());
+		knots.insert(knots.end(), static_cast<std::size_t>(degree) + 1, 1.0);
 		return knots;
 	}
 }  // namespace test

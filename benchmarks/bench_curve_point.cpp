@@ -30,6 +30,7 @@
 #include "gpu/curve_table_gpu.hpp"
 #include "gpu/device_buffer.hpp"
 #include "gpu/inverse_span_lengths_gpu.hpp"
+#include "gpu/span_lookup_gpu.hpp"
 #endif
 
 // Benchmark: evaluate N points C(u) on a NURBS curve on the CPU (one thread) and time it, with four
@@ -498,6 +499,17 @@ namespace
 		CpuGpu buildOnceWithCopies{};   // CPU buildInverseSpanLengths vs allocate and upload knots, build, download into a new vector
 	};
 	
+	// The span lookup rows of one type (bestOf, except the first build), in the printed order.
+	struct SpanLookupTimes
+	{
+		CpuGpu rebuildCompute{};        // CPU fillSpanLookup vs the kernel alone (CUDA events)
+		CpuGpu rebuildWithCopies{};     // CPU fillSpanLookup vs upload knots, kernel, download into existing memory
+		CpuGpu buildOnceCompute{};      // CPU constructor vs buildSpanLookupOnDevice until done (knots on the device)
+		CpuGpu buildOnceWithCopies{};   // CPU constructor vs allocate and upload knots, build, download into a new vector
+		CpuGpu firstBuild{};            // the same, the type's first time (loads the lookup kernel)
+		std::size_t differingCells{};   // cells whose span differs from the CPU's; should be 0
+	};
+	
 	// What the whole curve job leaves in host memory: the curve table and the 1 / h array.
 	template <std::floating_point T>
 	struct HostCurveResult
@@ -961,6 +973,145 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	// Span lookup, rebuild, CPU: into existing memory.
+	template <std::floating_point T>
+	double timeCpuSpanLookupRebuild(geom::NurbsCurve<T> const& curve, geom::SpanLookup<T> const& cpuLookup, std::vector<std::uint32_t>& host)
+	{
+		Clock::time_point const start = Clock::now();
+		geom::fillSpanLookup<T>(curve.degree(), curve.knots(), cpuLookup.start(), cpuLookup.cellsPerUnit(), host);
+		return secondsSince(start);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The lookup kernel alone: events directly around the launch, into an allocated table.
+	template <std::floating_point T>
+	double timeGpuSpanLookupRebuildCompute(gpu::DeviceBuffer<T> const& knots, gpu::DeviceSpanLookup<T>& lookup)
+	{
+		gpu::CudaEvent start{};
+		gpu::CudaEvent stop{};
+		start.record();
+		gpu::fillSpanLookupOnDevice<T>(knots, lookup);
+		stop.record();
+		return gpu::elapsedSeconds(start, stop);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Span lookup, rebuild incl. copies, GPU: new knots into the existing device buffer, the kernel into
+	// the existing device table, download into existing host memory.
+	template <std::floating_point T>
+	double timeGpuSpanLookupRebuildWithCopies(std::span<T const> knots, gpu::DeviceBuffer<T>& deviceKnots, gpu::DeviceSpanLookup<T>& lookup, std::vector<std::uint32_t>& host)
+	{
+		Clock::time_point const start = Clock::now();
+		deviceKnots.upload(knots);
+		gpu::fillSpanLookupOnDevice<T>(deviceKnots, lookup);
+		lookup.firstSpans.download(std::span<std::uint32_t>(host));
+		return secondsSince(start);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// A lookup table built on the GPU and downloaded into a new host vector, as a one-off build would: allocate
+	// and upload the knots, build, download. The device buffers are temporaries, freed (cudaFree) on return.
+	template <std::floating_point T>
+	std::vector<std::uint32_t> buildSpanLookupViaGpu(geom::NurbsCurve<T> const& curve)
+	{
+		auto const [domainStart, domainEnd] = curve.domain();
+		gpu::DeviceBuffer<T> const deviceKnots{curve.knots()};
+		gpu::DeviceSpanLookup<T> const lookup = gpu::buildSpanLookupOnDevice<T>(curve.degree(), deviceKnots, domainStart, domainEnd);
+		return lookup.firstSpans.download();
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Span lookup, build once incl. copies, GPU: the result is not freed in the timed region (see
+	// timeGpuBasisBuildOnceWithCopies).
+	template <std::floating_point T>
+	double timeGpuSpanLookupBuildOnceWithCopies(geom::NurbsCurve<T> const& curve, std::vector<std::uint32_t>& result)
+	{
+		result = {};
+		Clock::time_point const start = Clock::now();
+		result = buildSpanLookupViaGpu<T>(curve);
+		return secondsSince(start);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// buildSpanLookupOnDevice with the knots already on the GPU, until the GPU is done.
+	template <std::floating_point T>
+	double timeGpuSpanLookupBuildOnceCompute(geom::NurbsCurve<T> const& curve, gpu::DeviceBuffer<T> const& knots)
+	{
+		auto const [domainStart, domainEnd] = curve.domain();
+		Clock::time_point const start = Clock::now();
+		gpu::DeviceSpanLookup<T> const lookup = gpu::buildSpanLookupOnDevice<T>(curve.degree(), knots, domainStart, domainEnd);
+		gpu::checkCuda(cudaDeviceSynchronize());
+		return secondsSince(start);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// How many cells differ between two lookup tables.
+	std::size_t countDifferingCells(std::span<std::uint32_t const> a, std::span<std::uint32_t const> b)
+	{
+		std::size_t count = 0;
+		for (std::size_t k = 0; k < a.size(); ++k)
+		{
+			count += (a[k] != b[k]) ? 1 : 0;
+		}
+		return count;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The build once rows. The first build comes first, so that it pays for loading the lookup kernel. The
+	// GPU's last result is compared with cpuLookup.
+	template <std::floating_point T>
+	void measureSpanLookupBuildOnce(geom::NurbsCurve<T> const& curve, geom::SpanLookup<T> const& cpuLookup, SpanLookupTimes& t)
+	{
+		std::vector<std::uint32_t> result{};
+		t.firstBuild.gpuSeconds = timeGpuSpanLookupBuildOnceWithCopies<T>(curve, result);
+		double const cpuSeconds = bestOf([&] { return timeCpuBuildOnce<geom::SpanLookup<T>>(curve); });
+		gpu::DeviceBuffer<T> const deviceKnots{curve.knots()};
+		t.buildOnceCompute = {cpuSeconds, bestOf([&] { return timeGpuSpanLookupBuildOnceCompute<T>(curve, deviceKnots); })};
+		t.buildOnceWithCopies = {cpuSeconds, bestOf([&] { return timeGpuSpanLookupBuildOnceWithCopies<T>(curve, result); })};
+		t.firstBuild.cpuSeconds = cpuSeconds;
+		t.differingCells = t.differingCells + countDifferingCells(cpuLookup.firstSpans(), result);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The rebuild rows, with all host and device memory allocated here, before timing. The GPU's last result
+	// is compared with cpuLookup.
+	template <std::floating_point T>
+	void measureSpanLookupRebuild(geom::NurbsCurve<T> const& curve, geom::SpanLookup<T> const& cpuLookup, SpanLookupTimes& t)
+	{
+		auto const [domainStart, domainEnd] = curve.domain();
+		std::vector<std::uint32_t> host(cpuLookup.firstSpans().size());
+		double const cpuSeconds = bestOf([&] { return timeCpuSpanLookupRebuild<T>(curve, cpuLookup, host); });
+		gpu::DeviceBuffer<T> deviceKnots{curve.knots()};
+		gpu::DeviceSpanLookup<T> lookup = gpu::allocateSpanLookupOnDevice<T>(curve.degree(), curve.knots().size(), domainStart, domainEnd);
+		t.rebuildCompute = {cpuSeconds, bestOf([&] { return timeGpuSpanLookupRebuildCompute<T>(deviceKnots, lookup); })};
+		t.rebuildWithCopies = {cpuSeconds, bestOf([&] { return timeGpuSpanLookupRebuildWithCopies<T>(curve.knots(), deviceKnots, lookup, host); })};
+		t.differingCells = t.differingCells + countDifferingCells(cpuLookup.firstSpans(), host);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// Build once first: it times the first build. cpuLookup is the reference the GPU results are compared with.
+	template <std::floating_point T>
+	SpanLookupTimes measureSpanLookup(int degree, std::size_t numKnots)
+	{
+		geom::NurbsCurve<T> const curve = makeBenchmarkCurve<T>(degree, numKnots);
+		geom::SpanLookup<T> const cpuLookup(curve);
+		SpanLookupTimes t{};
+		measureSpanLookupBuildOnce<T>(curve, cpuLookup, t);
+		measureSpanLookupRebuild<T>(curve, cpuLookup, t);
+		return t;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	// Microseconds: one decimal below 1000, else whole microseconds with thousands separators.
 	std::string formatMicroseconds(double seconds)
 	{
@@ -1051,6 +1202,19 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	void printSpanLookupSection(SpanLookupTimes const& f, SpanLookupTimes const& d)
+	{
+		printSectionHeader("SPAN LOOKUP  (knots -> lookup table, 2 cells per span)");
+		printComparison("Rebuild, computation only", f.rebuildCompute, d.rebuildCompute);
+		printComparison("Rebuild, incl. copies CPU <-> GPU", f.rebuildWithCopies, d.rebuildWithCopies);
+		printComparison("Build once, computation only", f.buildOnceCompute, d.buildOnceCompute);
+		printComparison("Build once, incl. copies CPU <-> GPU", f.buildOnceWithCopies, d.buildOnceWithCopies);
+		printComparison("First build in this program", f.firstBuild, d.firstBuild);
+		std::println("  {:<38}{:>19}  {:<15}{:>19}", "Cells that differ from the CPU", f.differingCells, "", d.differingCells);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	void printCurveSections(CurveTableTimes const& f, CurveTableTimes const& d)
 	{
 		printSectionHeader("CURVE TABLE, STAGE 2 ONLY  (basis table -> curve table; basis table already built)");
@@ -1079,7 +1243,7 @@ namespace
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	// Measures everything before printing: asking for the device name is a CUDA call too, and would
-	// create the context before float's first call. The 1 / h rows come last, so that the whole job's
+	// create the context before float's first call. The 1 / h rows come after the curve rows, so that the whole job's
 	// first build also pays for loading the 1 / h kernel.
 	void compareCpuWithGpu(int degree, std::size_t numKnots)
 	{
@@ -1089,10 +1253,13 @@ namespace
 		CurveTableTimes const curveDoubles = measureCurveTable<double>(degree, numKnots);
 		InverseSpanLengthTimes const invHFloats = measureInverseSpanLengths<float>(degree, numKnots);
 		InverseSpanLengthTimes const invHDoubles = measureInverseSpanLengths<double>(degree, numKnots);
+		SpanLookupTimes const lookupFloats = measureSpanLookup<float>(degree, numKnots);
+		SpanLookupTimes const lookupDoubles = measureSpanLookup<double>(degree, numKnots);
 		printCpuVsGpuHeader(degree, numKnots);
 		printBasisSection(floats, doubles);
 		printCurveSections(curveFloats, curveDoubles);
 		printInverseSpanLengthsSection(invHFloats, invHDoubles);
+		printSpanLookupSection(lookupFloats, lookupDoubles);
 		printCpuVsGpuLegend();
 	}
 	

@@ -49,11 +49,6 @@ namespace geom
 		std::size_t find(std::span<T const> knots, T u) const;
 		
 	private:
-		// One pass over cells and knots together: the span of each cell's left edge, as findSpan would
-		// give it, in O(cells + knots) instead of one binary search per cell.
-		void fillCells(std::span<T const> knots);
-		
-	private:
 		int m_degree{};
 		T m_start{};
 		T m_cellsPerUnit{};
@@ -67,6 +62,13 @@ namespace geom
 	template <std::floating_point T>
 	GEOM_HD std::size_t findSpanWithLookup(int degree, std::type_identity_t<std::span<T const>> knots, std::span<std::uint32_t const> firstSpans, T start, T cellsPerUnit, T u);
 	
+	// Fills the cells of a lookup table into memory the caller owns, without allocating, in one pass over
+	// cells and knots together: the span of each cell's left edge, as findSpan would give it, in
+	// O(cells + knots) instead of one binary search per cell. Writes every value. The SpanLookup constructor
+	// is allocation plus this; call it directly to rebuild a table into reused memory.
+	template <std::floating_point T>
+	void fillSpanLookup(int degree, std::span<T const> knots, T start, T cellsPerUnit, std::span<std::uint32_t> firstSpans);
+	
 	namespace detail
 	{
 		// floor((u - start) * cellsPerUnit), clamped to [0, numCells - 1] (also for NaN).
@@ -77,6 +79,22 @@ namespace geom
 		// Precondition: a < u < b.
 		template <std::floating_point T>
 		GEOM_HD std::size_t walkToSpan(std::span<T const> knots, std::size_t span, T u);
+		
+		// The number of cells of a lookup table: cellsPerSpan for every span, at least one.
+		constexpr std::size_t numLookupCells(std::size_t numSpans, std::size_t cellsPerSpan);
+		
+		// cells / (b - a), so that cell = floor((u - a) * cellsPerUnit).
+		template <std::floating_point T>
+		T lookupCellsPerUnit(std::size_t numCells, T start, T end);
+		
+		// The left edge of a cell. Shared by the CPU sweep and the GPU kernel, so both use the same value.
+		template <std::floating_point T>
+		GEOM_HD T cellLeftEdge(std::size_t cell, T start, T cellsPerUnit);
+		
+		// The span of a cell's left edge, by its own findSpan: what one GPU thread does, needing no other
+		// cell. The edge is clamped to b because rounding can push it past the end, outside findSpan's domain.
+		template <std::floating_point T>
+		GEOM_HD std::uint32_t firstSpanOfCell(std::size_t cell, int degree, std::span<T const> knots, T start, T cellsPerUnit);
 	}  // namespace detail
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -85,18 +103,18 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// numSpans = n + 1 - p; every cell gets the span of its left edge (fillCells).
+	// numSpans = n + 1 - p; every cell gets the span of its left edge (fillSpanLookup).
 	template <std::floating_point T>
 	SpanLookup<T>::SpanLookup(int degree, std::span<T const> knots, std::size_t cellsPerSpan)
 		: m_degree(degree),
 		m_start(knots[static_cast<std::size_t>(degree)]),
 		m_cellsPerUnit{},
-		m_firstSpans(std::max<std::size_t>(1, cellsPerSpan * (knots.size() - 2 * static_cast<std::size_t>(degree) - 1)))
+		m_firstSpans(detail::numLookupCells(knots.size() - 2 * static_cast<std::size_t>(degree) - 1, cellsPerSpan))
 	{
 		assert(degree >= 1 && cellsPerSpan >= 1);
 		T const end = knots[knots.size() - 1 - static_cast<std::size_t>(degree)];
-		m_cellsPerUnit = static_cast<T>(m_firstSpans.size()) / (end - m_start);
-		fillCells(knots);
+		m_cellsPerUnit = detail::lookupCellsPerUnit<T>(m_firstSpans.size(), m_start, end);
+		fillSpanLookup<T>(degree, knots, m_start, m_cellsPerUnit, m_firstSpans);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -148,27 +166,6 @@ namespace geom
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// The left edges increase with the cell, so the span only moves forward. It stops at n, which
-	// also covers a left edge that rounding pushed to b.
-	template <std::floating_point T>
-	void SpanLookup<T>::fillCells(std::span<T const> knots)
-	{
-		auto const p = static_cast<std::size_t>(m_degree);
-		std::size_t const n = knots.size() - p - 2;
-		std::size_t span = p;
-		for (std::size_t cell = 0; cell < m_firstSpans.size(); ++cell)
-		{
-			T const leftEdge = m_start + static_cast<T>(cell) / m_cellsPerUnit;
-			while (span < n && leftEdge >= knots[span + 1])
-			{
-				++span;
-			}
-			m_firstSpans[cell] = static_cast<std::uint32_t>(span);
-		}
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -191,6 +188,27 @@ namespace geom
 		}
 		std::size_t const first = firstSpans[detail::cellIndex(u, start, cellsPerUnit, firstSpans.size())];
 		return detail::walkToSpan<T>(knots, first, u);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The left edges increase with the cell, so the span only moves forward. It stops at n, which
+	// also covers a left edge that rounding pushed to b.
+	template <std::floating_point T>
+	void fillSpanLookup(int degree, std::span<T const> knots, T start, T cellsPerUnit, std::span<std::uint32_t> firstSpans)
+	{
+		auto const p = static_cast<std::size_t>(degree);
+		std::size_t const n = knots.size() - p - 2;
+		std::size_t span = p;
+		for (std::size_t cell = 0; cell < firstSpans.size(); ++cell)
+		{
+			T const leftEdge = detail::cellLeftEdge<T>(cell, start, cellsPerUnit);
+			while (span < n && leftEdge >= knots[span + 1])
+			{
+				++span;
+			}
+			firstSpans[cell] = static_cast<std::uint32_t>(span);
+		}
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -225,5 +243,38 @@ namespace geom
 			--span;
 		}
 		return span;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	constexpr std::size_t detail::numLookupCells(std::size_t numSpans, std::size_t cellsPerSpan)
+	{
+		return std::max<std::size_t>(1, cellsPerSpan * numSpans);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	T detail::lookupCellsPerUnit(std::size_t numCells, T start, T end)
+	{
+		return static_cast<T>(numCells) / (end - start);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	GEOM_HD T detail::cellLeftEdge(std::size_t cell, T start, T cellsPerUnit)
+	{
+		return start + static_cast<T>(cell) / cellsPerUnit;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	GEOM_HD std::uint32_t detail::firstSpanOfCell(std::size_t cell, int degree, std::span<T const> knots, T start, T cellsPerUnit)
+	{
+		T const end = knots[knots.size() - 1 - static_cast<std::size_t>(degree)];
+		T const leftEdge = cellLeftEdge<T>(cell, start, cellsPerUnit);
+		return static_cast<std::uint32_t>(findSpan<T>(degree, knots, leftEdge < end ? leftEdge : end));
 	}
 }  // namespace geom

@@ -47,10 +47,18 @@ The result is always the same as `findSpan`, for every `u` in the domain `[a, b]
 - Steps per query: at most the number of knots inside the cell (plus one at a rounding edge). With
   `cellsPerSpan` cells per span (default 2) most cells hold zero or one knot. Clusters of very short
   spans give more steps in their cells; more cells per span fix that.
-- Build, once: one `findSpan` per cell. Memory: one 32-bit index per cell (2 x 10,000 spans = 80 KB).
+- Build, once: on the CPU one pass over cells and knots together (`O(cells + knots)`); on the GPU one `findSpan` per
+  cell, see below. Memory: one 32-bit index per cell (2 x 10,000 spans = 80 KB).
 - Uniform knots need no special case: every cell lies within at most two spans.
 - GPU: one load from a small table and a few comparisons per thread, instead of a chain of dependent
   loads with divergent branches.
+
+## GPU build
+
+`buildSpanLookupOnDevice` (`src/gpu/span_lookup_gpu.cu`) has one thread per cell. The CPU's pass continues from the
+previous cell's span, which a thread cannot see, so each thread runs `findSpan` on its own cell's left edge
+(`detail::firstSpanOfCell`, which clamps the edge to `b` against rounding). The result is identical to the CPU's:
+the same edge values, and the same span for each edge.
 
 ## Tests
 
@@ -59,3 +67,5 @@ The result is always the same as `findSpan`, for every `u` in the domain `[a, b]
   vectors (fixed seed) with repeated knots. Queries at random `u`, exactly at every knot, at `a`, `b`
   and slightly outside `[a, b]`; with 1, 2 and 4 cells per span; `double` and `float`.
 - Curve points through the lookup equal `curve(u)`.
+- GPU (`tests/test_span_lookup_gpu.cpp`): identical to the CPU `SpanLookup` on the special and random knot vectors,
+  with 1, 2 and 4 cells per span, from dirty memory.

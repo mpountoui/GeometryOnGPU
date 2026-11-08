@@ -20,7 +20,8 @@ Update the status column when a step is done, and record agreed decisions below.
 | 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | done 2026-11-01 |
 | 2b | GPU curve table build in `bench_curve_point`, as in step 1b, against the CPU curve stage and the full CPU build | Choosing a fair baseline | done 2026-11-07 |
 | 2c | One 1 / h array per knot vector, owned by neither table (CPU and GPU), with its own kernel | Removing a copy by changing who owns the data | done 2026-11-08 |
-| 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | |
+| 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | done 2026-11-08 |
+| 3b | GPU span lookup build in `bench_curve_point`, as in steps 1b and 2b; CPU `fillSpanLookup` for the rebuild rows | Comparing a parallel algorithm with a sequential one | done 2026-11-08 |
 | 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | |
 | 5 | Basis table kernel with one block per span, levels in shared memory | `__shared__`, `__syncthreads()`, warps | |
 | 6 | Fuse kernels, several spans per block, float vs double, profiling | Occupancy, `nsys`/`ncu` | |
@@ -139,8 +140,7 @@ Findings (2026-11-07, RTX A4500; details and numbers in `docs/benchmarks.md`):
 - `detail::inverseSpanLength` is the shared `GEOM_HD` per-span function; `buildBasisRow` writes coefficients only.
 - Its own kernel, one thread per span. Costs one more launch whenever the knots change; step 6 (fuse kernels)
   can remove it. A rebuild after only the control points change does less work than before.
-- Grouping knots, 1/h and lookup cells in a `Knots`/`DeviceKnots` is left to step 3, when the lookup cells give it
-  more than one array to hold.
+- Grouping knots, 1/h and lookup cells in a `Knots`/`DeviceKnots`: not done, see step 3.
 
 Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
 
@@ -148,3 +148,32 @@ Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
 - Without the copy the curve kernel (stage 2, rebuild, 97 spans, float) went from 8.5 to about 4.7 us. Whole job with
   copies, same size: 32.7 to about 36-38 us, because the extra launch and download outweigh the removed copy at this
   size (before: a single run on the same machine).
+
+## Step 3: agreed decisions (implemented)
+
+- Kernel `spanLookupKernel` in `src/gpu/span_lookup_gpu.cu`: one thread per cell, each with its own `findSpan` on the
+  cell's left edge, because a thread cannot continue from the previous cell as the CPU sweep does. More total work
+  (one binary search per cell, `O(cells log knots)` against `O(cells + knots)`), but independent per cell.
+- `gpu::DeviceSpanLookup<T>` with the usual `allocate`/`fill`/`build` functions. The caller passes the domain
+  `start, end`, because the host cannot read knots in device memory.
+- Shared with the CPU: `detail::numLookupCells`, `lookupCellsPerUnit`, `cellLeftEdge`. The CPU keeps its sweep.
+- `detail::firstSpanOfCell` clamps the left edge to `b`: rounding can push it past the end, and `findSpan` asserts
+  that `u` is in the domain in debug builds.
+- Knots, 1/h and the lookup stay separate: the lookup also depends on `cellsPerSpan`, and nothing takes all three
+  until a GPU query kernel exists. Decide on a `DeviceKnots` then, from what that kernel needs.
+- No benchmark in this step; added after all in step 3b.
+
+Findings (2026-11-08, RTX 4000 Ada):
+
+- The GPU table is identical to the CPU table in float and double, for the special and random knot vectors with
+  1, 2 and 4 cells per span. A kernel that skips one cell fails the test (0xFFFFFFFF fill).
+
+## Step 3b: agreed decisions (implemented)
+
+- New section in `bench_curve_point`, same rows as the basis table. `SpanLookup::fillCells` became the free function
+  `geom::fillSpanLookup`, so the CPU rebuild rows build into reused memory (the constructor = allocate + fill).
+
+Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
+
+- Computation only, rebuild, float: 4.9x faster than the CPU's sweep at 10k spans, 29x at 1M, despite a binary search
+  per cell. 15x slower at 97 spans (launch).
