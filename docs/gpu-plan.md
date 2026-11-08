@@ -144,7 +144,7 @@ Findings (2026-11-07, RTX A4500; details and numbers in `docs/benchmarks.md`):
 
 Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
 
-- The 1/h kernel takes 3-9 us (float, rebuild) up to 1M spans, so it costs about one launch.
+- The 1/h kernel takes 5-9 us (float, rebuild) up to 1M spans, so it costs about one launch.
 - Without the copy the curve kernel (stage 2, rebuild, 97 spans, float) went from 8.5 to about 4.7 us. Whole job with
   copies, same size: 32.7 to about 36-38 us, because the extra launch and download outweigh the removed copy at this
   size (before: a single run on the same machine).
@@ -175,7 +175,7 @@ Findings (2026-11-08, RTX 4000 Ada):
 
 Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
 
-- Computation only, rebuild, float: 4.9x faster than the CPU's sweep at 10k spans, 29x at 1M, despite a binary search
+- Computation only, rebuild, float: 4.5x faster than the CPU's sweep at 10k spans, 28x at 1M, despite a binary search
   per cell. 15x slower at 97 spans (launch).
 
 ## Step 4: agreed decisions (implemented)
@@ -186,7 +186,8 @@ Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
 - OpenMP rather than `std::thread`: it keeps its threads alive between runs, so small curves do not pay for creating them.
 - The threaded lookup gives each thread a chunk of cells, one `findSpan` and then the sweep, so the CPU keeps its best algorithm.
 - Afterwards the per-table CPU vs GPU sections moved from `bench_curve_point` into `bench_precompute`
-  (`bench_table_builds.cpp`), so `bench_curve_point` is only about queries and needs no CUDA.
+  (`bench_table_builds.cpp`), so `bench_curve_point` is only about queries and needs no CUDA. Rows the precomputation sections cover
+  were removed, and 1/h left the curve table's whole job: it has its own section, with a first build row.
 
 Findings (2026-11-08, RTX 4000 Ada, numbers in `docs/benchmarks.md`):
 

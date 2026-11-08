@@ -32,11 +32,11 @@
 #include "gpu/span_lookup_gpu.hpp"
 
 // Benchmark of everything a curve needs before its first query. First each table on its own, one CPU
-// thread against the GPU (bench_table_builds.cpp). Then the whole job (1 / h, basis table, curve table,
-// span lookup), on the CPU with 1, 8 and all usable threads and on the GPU, and where the GPU's time goes.
+// thread against the GPU (bench_table_builds.cpp). Then everything together (1 / h, basis table, curve
+// table, span lookup), on the CPU with 1, 8 and all usable threads and on the GPU, and where the GPU's time goes.
 // Results in docs/benchmarks.md.
 //
-//   bench_precompute [knots] [degree]      defaults: knots = 10004, degree = 3
+//   bench_precompute [degree] [--knots K]      defaults: degree = 3, K = 10004 (--knots=K also works)
 //
 // Every row is a rebuild: all memory is allocated before the clock starts. One warm-up first, so that
 // neither OpenMP creating its threads nor CUDA loading the kernels is timed.
@@ -126,6 +126,32 @@ namespace
 		int const hardware = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
 		int const limit = cgroupCpuLimit();
 		return limit > 0 ? std::min(hardware, limit) : hardware;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// [degree], plus the optional flag --knots K anywhere; false in valid if the arguments make no sense.
+	struct Options
+	{
+		std::size_t numKnots{kDefaultKnots};
+		std::size_t degree{3};
+		bool valid{true};
+	};
+	
+	Options parseOptions(int argc, char* argv[])
+	{
+		Options options{};
+		std::vector<std::string_view> numbers{};
+		for (int i = 1; i < argc; ++i)
+		{
+			if (!bench::parseKnotsFlag(argc, argv, i, options.numKnots))
+			{
+				numbers.push_back(argv[i]);
+			}
+		}
+		options.degree = numbers.size() > 0 ? parseNumber(numbers[0]) : options.degree;
+		options.valid = numbers.size() <= 1 && options.degree >= 1 && options.degree <= static_cast<std::size_t>(geom::kMaxDegree) && options.numKnots >= 2 * (options.degree + 1);
+		return options;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -573,14 +599,14 @@ namespace
 	void printBreakdown(Breakdown const& f, Breakdown const& d)
 	{
 		std::println();
-		std::println("WHERE THE GPU TIME GOES  (all tables, incl. copies; the fastest run)");
+		std::println("WHERE THE GPU TIME GOES  (all tables, incl. copies; CUDA events of the fastest run; share of the events' total)");
 		std::println("  {:<28}{:>11}{:>11}{:>13}{:>11}", "", "float [us]", "share", "double [us]", "share");
 		for (std::size_t k = 0; k < kNumStages; ++k)
 		{
 			printStageRow(kStageNames[k], f.stageSeconds[k], f.eventSeconds, d.stageSeconds[k], d.eventSeconds);
 		}
 		printStageRow("total (CUDA events)", f.eventSeconds, f.eventSeconds, d.eventSeconds, d.eventSeconds);
-		printStageRow("total (host clock)", f.hostSeconds, f.eventSeconds, d.hostSeconds, d.eventSeconds);
+		std::println("  {:<28}{:>11}{:>11}{:>13}", "total (host clock)", formatMicroseconds(f.hostSeconds), "", formatMicroseconds(d.hostSeconds));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -593,7 +619,8 @@ namespace
 		std::println("Precomputation on the CPU ({} usable of {} hardware threads) and the GPU ({}, sm_{}{})", usableThreads(), std::thread::hardware_concurrency(), properties.name, properties.major, properties.minor);
 		std::println("  {} spans, degree {}. Times in µs: best of at least {} runs and {} s, after one warm-up build.", withThousands(numSpans), degree, bench::kRuns, bench::kMinSeconds);
 		std::println("  All memory is allocated beforehand. 1 thread = the library's sequential code; more threads use OpenMP, the lookup one chunk of cells per thread.");
-		std::println("  GPU, incl. copies: upload the inputs, the kernels, download what CPU queries need (the basis table stays on the GPU).");
+		std::println("  GPU, computation only: the kernels, between CUDA events, on data already on the GPU.");
+		std::println("  GPU, incl. copies (host clock): upload the inputs, the kernels, download what changed and CPU queries need (the basis table stays on the GPU).");
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -613,14 +640,14 @@ namespace
 
 int main(int argc, char* argv[])
 {
-	std::size_t const numKnots = argc > 1 ? parseNumber(argv[1]) : kDefaultKnots;
-	std::size_t const degreeArg = argc > 2 ? parseNumber(argv[2]) : 3;
-	if (argc > 3 || degreeArg < 1 || degreeArg > static_cast<std::size_t>(geom::kMaxDegree) || numKnots < 2 * (degreeArg + 1))
+	Options const options = parseOptions(argc, argv);
+	if (!options.valid)
 	{
-		std::println(stderr, "usage: bench_precompute [knots >= 2 * (degree + 1)] [1 <= degree <= {}]", geom::kMaxDegree);
+		std::println(stderr, "usage: bench_precompute [1 <= degree <= {}] [--knots K >= 2 * (degree + 1)]", geom::kMaxDegree);
 		return 1;
 	}
-	int const degree = static_cast<int>(degreeArg);
+	int const degree = static_cast<int>(options.degree);
+	std::size_t const numKnots = options.numKnots;
 	bench::compareTableBuilds(degree, numKnots);
 	std::println();
 	std::vector<int> const threadCounts = threadCountsToMeasure();

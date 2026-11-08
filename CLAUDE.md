@@ -26,7 +26,7 @@ cmake --build build                  # build
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
 ./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # queries on the CPU (Release build); results in docs/benchmarks.md
-./build/bench_precompute [knots] [degree]                    # CUDA + OpenMP: each table's build and the whole
+./build/bench_precompute [degree] [--knots K]                 # CUDA + OpenMP: each table's build and the whole
                                                              # precomputation, CPU vs GPU; results in docs/benchmarks.md
 ```
 

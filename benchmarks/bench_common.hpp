@@ -194,4 +194,24 @@ namespace bench
 		checksumSink = checksumSink + static_cast<double>(inverseSpanLengths.back());
 		return seconds;
 	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// If argv[i] is "--knots K" or "--knots=K", stores K in numKnots (0 if it is not a number), moves i to the
+	// last argument used and returns true.
+	inline bool parseKnotsFlag(int argc, char* argv[], int& i, std::size_t& numKnots)
+	{
+		std::string_view const arg = argv[i];
+		if (arg == "--knots")
+		{
+			numKnots = i + 1 < argc ? parseNumber(argv[++i]) : 0;
+			return true;
+		}
+		if (arg.starts_with("--knots="))
+		{
+			numKnots = parseNumber(arg.substr(std::string_view("--knots=").size()));
+			return true;
+		}
+		return false;
+	}
 }  // namespace bench

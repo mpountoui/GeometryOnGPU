@@ -31,7 +31,7 @@
 //
 //   bench_curve_point [N] [degree] [--knots K] [--svg]      defaults: N = 1000000, degree = 3
 //
-// --knots K sets the number of knots (uniform and clamped, so K - degree - 1 control points;
+// --knots K (or --knots=K) sets the number of knots (uniform and clamped, so K - degree - 1 control points;
 // K >= 2 * (degree + 1)). Without it the curve has 100 control points.
 // --svg also saves a picture of the benchmark curve (xy projection) to svg/benchmark_curve.svg
 // next to the executable.
@@ -204,6 +204,19 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
+	void printPrecomputationLegend()
+	{
+		std::println();
+		std::println("  speedup         per point, against direct");
+		std::println("  precomp         everything built before the first point, incl. the 1 / h array; best of at least {} runs and {} s", kRuns, bench::kMinSeconds);
+		std::println("                  (basis: basis table; curve: curve table, its basis table built inside; lookup: curve table + lookup table)");
+		std::println("  memory          what queries keep: those tables and the 1 / h array (lookup: 2 cells per span)");
+		std::println("  pays off after  precomp divided by the time saved per point against direct");
+		std::println("  max diff        largest distance from direct's points");
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
 	void printMethodsHeader(std::size_t count, int degree, std::size_t numKnots)
 	{
 		auto const p = static_cast<std::size_t>(degree);
@@ -218,6 +231,7 @@ namespace
 		std::println("  basis   basis polynomials of all spans computed once; per point: findSpan, Horner per basis function, weighted sum");
 		std::println("  curve   basis x control points (the curve per span) computed once; per point: findSpan, one 4D Horner");
 		std::println("  lookup  curve table, with the span from a lookup table instead of the binary search");
+		printPrecomputationLegend();
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -316,7 +330,7 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Handles argv[i] if it is a flag: --svg, or --knots K (which also consumes K, so it advances i).
+	// Handles argv[i] if it is a flag: --svg, or --knots K / --knots=K (the first form also consumes K, so it advances i).
 	// Returns false for a positional argument.
 	bool parseFlag(int argc, char* argv[], int& i, Options& options)
 	{
@@ -326,9 +340,8 @@ namespace
 			options.writeSvg = true;
 			return true;
 		}
-		if (arg == "--knots")
+		if (bench::parseKnotsFlag(argc, argv, i, options.numKnots))
 		{
-			options.numKnots = i + 1 < argc ? parseNumber(argv[++i]) : 0;
 			options.knotsGiven = true;
 			return true;
 		}
