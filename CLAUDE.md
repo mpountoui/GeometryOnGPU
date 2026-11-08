@@ -25,9 +25,9 @@ cmake --build build                  # build
 ./build/geometry_on_gpu --svg [dir]  # write demo curve images (default: build/svg/)
 ctest --test-dir build --output-on-failure   # test: one executable per tests/test_<name>.cpp,
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
-./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # benchmark (Release build; with CUDA also the GPU
-                                                             # table builds); results in docs/benchmarks.md
-./build/bench_precompute [knots] [degree]                    # CUDA + OpenMP: whole precomputation, CPU threads vs GPU
+./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # queries on the CPU (Release build); results in docs/benchmarks.md
+./build/bench_precompute [knots] [degree]                    # CUDA + OpenMP: each table's build and the whole
+                                                             # precomputation, CPU vs GPU; results in docs/benchmarks.md
 ```
 
 ## Architecture

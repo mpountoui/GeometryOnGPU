@@ -17,6 +17,7 @@
 #include <omp.h>
 
 #include "bench_common.hpp"
+#include "bench_table_builds.hpp"
 #include "geom/basis_table.hpp"
 #include "geom/curve_table.hpp"
 #include "geom/inverse_span_lengths.hpp"
@@ -30,8 +31,9 @@
 #include "gpu/inverse_span_lengths_gpu.hpp"
 #include "gpu/span_lookup_gpu.hpp"
 
-// Benchmark: everything a curve needs before its first query (1 / h, basis table, curve table, span
-// lookup), on the CPU with 1, 8 and all usable threads and on the GPU, and where the GPU's time goes.
+// Benchmark of everything a curve needs before its first query. First each table on its own, one CPU
+// thread against the GPU (bench_table_builds.cpp). Then the whole job (1 / h, basis table, curve table,
+// span lookup), on the CPU with 1, 8 and all usable threads and on the GPU, and where the GPU's time goes.
 // Results in docs/benchmarks.md.
 //
 //   bench_precompute [knots] [degree]      defaults: knots = 10004, degree = 3
@@ -619,6 +621,8 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 	int const degree = static_cast<int>(degreeArg);
+	bench::compareTableBuilds(degree, numKnots);
+	std::println();
 	std::vector<int> const threadCounts = threadCountsToMeasure();
 	TypeTimes const floats = measureType<float>(degree, numKnots, threadCounts);
 	TypeTimes const doubles = measureType<double>(degree, numKnots, threadCounts);

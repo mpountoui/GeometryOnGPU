@@ -149,18 +149,13 @@ target_compile_features(bench_curve_point PRIVATE cxx_std_23)
 target_link_libraries(bench_curve_point PRIVATE geom viz)
 geom_enable_warnings(bench_curve_point)
 
-# With CUDA the benchmark also times the GPU builds (its "#ifdef GEOM_HAS_CUDA" parts).
-if(GEOM_HAS_CUDA)
-	target_compile_definitions(bench_curve_point PRIVATE GEOM_HAS_CUDA=1)
-	target_link_libraries(bench_curve_point PRIVATE gpu)
-endif()
-
-# CPU (OpenMP threads) against GPU for the whole precomputation. Only with CUDA, and only if the
+# All precomputation: each table on one CPU thread against the GPU, and the whole job with CPU threads
+# (OpenMP) against the GPU. Only with CUDA, and only if the
 # compiler has OpenMP; it is linked into this benchmark alone.
 if(GEOM_HAS_CUDA)
 	find_package(OpenMP COMPONENTS CXX)
 	if(OpenMP_CXX_FOUND)
-		add_executable(bench_precompute benchmarks/bench_precompute.cpp)
+		add_executable(bench_precompute benchmarks/bench_precompute.cpp benchmarks/bench_table_builds.cpp)
 		target_compile_features(bench_precompute PRIVATE cxx_std_23)
 		target_link_libraries(bench_precompute PRIVATE geom gpu OpenMP::OpenMP_CXX)
 		geom_enable_warnings(bench_precompute)

@@ -185,6 +185,8 @@ Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
   sequential code), 8, and all usable threads, against the GPU with and without copies; a per-stage breakdown from CUDA events.
 - OpenMP rather than `std::thread`: it keeps its threads alive between runs, so small curves do not pay for creating them.
 - The threaded lookup gives each thread a chunk of cells, one `findSpan` and then the sweep, so the CPU keeps its best algorithm.
+- Afterwards the per-table CPU vs GPU sections moved from `bench_curve_point` into `bench_precompute`
+  (`bench_table_builds.cpp`), so `bench_curve_point` is only about queries and needs no CUDA.
 
 Findings (2026-11-08, RTX 4000 Ada, numbers in `docs/benchmarks.md`):
 

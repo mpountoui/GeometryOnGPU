@@ -11,8 +11,12 @@
 #include <system_error>
 #include <vector>
 
+#include "geom/basis_table.hpp"
+#include "geom/curve_table.hpp"
+#include "geom/inverse_span_lengths.hpp"
 #include "geom/nurbs_curve.hpp"
 #include "geom/point.hpp"
+#include "geom/span_lookup.hpp"
 
 // What the benchmark executables share: the benchmark curve, the timing method and number formatting.
 
@@ -22,6 +26,9 @@ namespace bench
 	
 	constexpr int kRuns = 5;
 	constexpr double kMinSeconds = 0.2;   // bestOf runs at least kRuns times and at least this long in total
+	
+	// Written by timeCpuBuildOnce so the compiler cannot drop the table builds it times.
+	inline double volatile checksumSink = 0.0;
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
@@ -134,5 +141,57 @@ namespace bench
 		double const ratio = faster ? reference / seconds : seconds / reference;
 		std::string const number = (ratio < 10.0) ? std::format("{:.1f}", ratio) : withThousands(static_cast<std::size_t>(std::llround(ratio)));
 		return number + (faster ? "x faster" : "x slower");
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// A value that depends on the whole build, so the compiler cannot drop the builds timeCpuBuildOnce times.
+	template <std::floating_point T>
+	double sinkValue(geom::BasisTable<T> const& table)
+	{
+		return static_cast<double>(table.coefficients().back());
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	double sinkValue(geom::CurveTable<T> const& table)
+	{
+		return static_cast<double>(table.coefficients().back().w);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	template <std::floating_point T>
+	double sinkValue(geom::SpanLookup<T> const& lookup)
+	{
+		return static_cast<double>(lookup.firstSpans().back());
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// A build once of a table (BasisTable, CurveTable or SpanLookup) from the curve: its constructor,
+	// allocation included.
+	template <typename Table, std::floating_point T>
+	double timeCpuBuildOnce(geom::NurbsCurve<T> const& curve)
+	{
+		Clock::time_point const start = Clock::now();
+		Table const table(curve);
+		double const seconds = secondsSince(start);
+		checksumSink = checksumSink + sinkValue(table);
+		return seconds;
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// A build once of the 1 / h array, allocation included.
+	template <std::floating_point T>
+	double timeCpuInverseSpanLengthsBuildOnce(geom::NurbsCurve<T> const& curve)
+	{
+		Clock::time_point const start = Clock::now();
+		std::vector<T> const inverseSpanLengths = geom::buildInverseSpanLengths<T>(curve.degree(), curve.knots());
+		double const seconds = secondsSince(start);
+		checksumSink = checksumSink + static_cast<double>(inverseSpanLengths.back());
+		return seconds;
 	}
 }  // namespace bench

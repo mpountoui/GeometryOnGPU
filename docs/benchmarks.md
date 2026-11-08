@@ -4,7 +4,8 @@ How to reproduce: build in Release (the default), then run the benchmark by hand
 
 ```
 cmake -S . -B build && cmake --build build
-./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # --svg also saves build/svg/benchmark_curve.svg
+./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # queries on the CPU; --svg also saves build/svg/benchmark_curve.svg
+./build/bench_precompute [knots] [degree]                    # with CUDA and OpenMP: all precomputation, CPU vs GPU
 ```
 
 ## Curve point evaluation, CPU baseline (`bench_curve_point`)
@@ -136,9 +137,9 @@ Observations:
   costs the most to prepare but pays off soonest, because it saves the most per point.
 
 
-## Basis table build, CPU vs GPU (`bench_curve_point` with CUDA, since 2026-10-26)
+## Basis table build, CPU vs GPU (since 2026-10-26)
 
-The last section of `bench_curve_point` (only with CUDA) builds the `BasisTable` on the CPU and with
+At the time, the last section of `bench_curve_point` (only with CUDA) built the `BasisTable` on the CPU and with
 `buildBasisTableOnDevice` (one thread per span, `src/gpu/basis_table_gpu.cu`), best of 5:
 
 - **kernel only**: CUDA events directly around the launch, into an allocated table;
@@ -174,9 +175,10 @@ Observations:
   in global memory (p read/write passes over each row), and neighbouring threads write rows 64 bytes
   apart (uncoalesced). Next: confirm with `ncu`.
 
-## GPU table builds, CPU vs GPU (`bench_curve_point` with CUDA, since 2026-11-07)
+## GPU table builds, CPU vs GPU (`bench_precompute`, since 2026-11-07)
 
-The last part of `bench_curve_point` builds the `BasisTable`, the 1 / h array, the `CurveTable` and the `SpanLookup` on the CPU
+The first part of `bench_precompute` (`benchmarks/bench_table_builds.cpp`; until 2026-11-08 the last part of
+`bench_curve_point`) builds the `BasisTable`, the 1 / h array, the `CurveTable` and the `SpanLookup` on the CPU
 (1 thread) and on the GPU (`src/gpu/basis_table_gpu.cu`, `inverse_span_lengths_gpu.cu`, `curve_table_gpu.cu`, `span_lookup_gpu.cu`).
 Each row compares the same work on both:
 
