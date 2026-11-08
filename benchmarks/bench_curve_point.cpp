@@ -1,9 +1,11 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <print>
 #include <span>
 #include <string>
@@ -204,47 +206,7 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	void printPrecomputationLegend()
-	{
-		std::println();
-		std::println("  speedup         per point, against direct");
-		std::println("  precomp         everything built before the first point, incl. the 1 / h array; best of at least {} runs and {} s", kRuns, bench::kMinSeconds);
-		std::println("                  (basis: basis table; curve: curve table, its basis table built inside; lookup: curve table + lookup table)");
-		std::println("  memory          what queries keep: those tables and the 1 / h array (lookup: 2 cells per span)");
-		std::println("  pays off after  precomp divided by the time saved per point against direct");
-		std::println("  max diff        largest distance from direct's points");
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	void printMethodsHeader(std::size_t count, int degree, std::size_t numKnots)
-	{
-		auto const p = static_cast<std::size_t>(degree);
-		std::println("NURBS curve point evaluation (CPU, 1 thread)");
-#ifndef NDEBUG
-		std::println("WARNING: Debug build with asserts on, the timings are NOT representative");
-#endif
-		std::println();
-		std::println("  curve   degree {}, {} knots, {} spans, {} control points (rational 3D spiral)", degree, withThousands(numKnots), withThousands(numKnots - 2 * p - 1), withThousands(numKnots - p - 1));
-		std::println("  points  {} evenly spaced parameters, best and median of {} runs", withThousands(count), kRuns);
-		std::println("  direct  every point: findSpan, basisFunctions (A2.2), weighted sum");
-		std::println("  basis   basis polynomials of all spans computed once; per point: findSpan, Horner per basis function, weighted sum");
-		std::println("  curve   basis x control points (the curve per span) computed once; per point: findSpan, one 4D Horner");
-		std::println("  lookup  curve table, with the span from a lookup table instead of the binary search");
-		printPrecomputationLegend();
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	void printEvaluationRow(std::string_view method, EvaluationTimes const& timing, std::size_t count)
-	{
-		double const n = static_cast<double>(count);
-		std::println("    {:<8}{:>10.2f}{:>13.2f}{:>16.2f}{:>12.1f}", method, timing.bestSeconds * 1e3, timing.medianSeconds * 1e3, timing.bestSeconds * 1e9 / n, n / timing.bestSeconds / 1e6);
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// The precomputation of one method, everything built before the first point.
+	// One table method's precomputation: everything built before the first point.
 	struct Precomputation
 	{
 		std::string_view name{};
@@ -253,6 +215,24 @@ namespace
 		double kilobytes{};     // total memory
 		double difference{};    // largest |C_method(u) - C_direct(u)|
 	};
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The three table methods of one type. Totals, each with the 1 / h array: basis = the basis table;
+	// curve = the curve table (it builds its basis table inside); lookup = the curve table plus the lookup table.
+	template <std::floating_point T>
+	std::array<Precomputation, 3> tableMethods(MethodTimes const& c, int degree, std::size_t numKnots)
+	{
+		auto const p = static_cast<std::size_t>(degree);
+		std::size_t const numSpans = numKnots - 2 * p - 1;
+		double const basisKilobytes  = static_cast<double>(numSpans * ((p + 1) * (p + 1) + 1) * sizeof(T)) / 1024.0;
+		double const curveKilobytes  = static_cast<double>(numSpans * (4 * (p + 1) + 1) * sizeof(T)) / 1024.0;
+		double const lookupKilobytes = static_cast<double>(2 * numSpans * sizeof(std::uint32_t)) / 1024.0;
+		Precomputation const basis{"basis", c.basis, c.basisBuildSeconds + c.invHBuildSeconds, basisKilobytes, c.basisDifference};
+		Precomputation const curve{"curve", c.curve, c.curveBuildSeconds + c.invHBuildSeconds, curveKilobytes, c.curveDifference};
+		Precomputation const lookup{"lookup", c.lookup, c.curveBuildSeconds + c.lookupBuildSeconds + c.invHBuildSeconds, curveKilobytes + lookupKilobytes, c.lookupDifference};
+		return {basis, curve, lookup};
+	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
@@ -270,48 +250,94 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// One row of the precomputation table: speedup, total build time and memory, break-even, agreement.
-	void printPrecomputation(EvaluationTimes const& direct, Precomputation const& method, std::size_t count)
+	void printHeader(std::size_t count, int degree, std::size_t numKnots)
 	{
-		double const speedup = direct.bestSeconds / method.evaluation.bestSeconds;
-		std::println("    {:<9}{:>8.2f}x{:>13.1f}{:>13.1f}{:>20}{:>13.1e}", method.name, speedup, method.seconds * 1e6, method.kilobytes, paysOffAfter(direct, method, count), method.difference);
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// One block: the four methods, then the precomputation of each table method. Totals, each with the
-	// 1 / h array: basis = the basis table; curve = the curve table (it builds its basis table inside);
-	// lookup = the curve table plus the lookup table.
-	template <std::floating_point T>
-	MethodTimes compareMethods(std::string_view type, int degree, std::size_t numKnots, std::size_t count)
-	{
-		MethodTimes const c = measureMethods<T>(degree, numKnots, count);
 		auto const p = static_cast<std::size_t>(degree);
-		std::size_t const numSpans = numKnots - 2 * p - 1;
-		double const basisKilobytes  = static_cast<double>(numSpans * ((p + 1) * (p + 1) + 1) * sizeof(T)) / 1024.0;
-		double const curveKilobytes  = static_cast<double>(numSpans * (4 * (p + 1) + 1) * sizeof(T)) / 1024.0;
-		double const lookupKilobytes = static_cast<double>(2 * numSpans * sizeof(std::uint32_t)) / 1024.0;
+		std::println("Curve point evaluation on the CPU (1 thread)");
+#ifndef NDEBUG
+		std::println("WARNING: Debug build with asserts on, the timings are NOT representative");
+#endif
+		std::println("  curve    degree {}, {} knots, {} spans, {} control points (rational 3D spiral)", degree, withThousands(numKnots), withThousands(numKnots - 2 * p - 1), withThousands(numKnots - p - 1));
+		std::println("  queries  {} evenly spaced parameters, the same for every method", withThousands(count));
 		std::println();
-		std::println("  {:<10}{:>10}{:>13}{:>16}{:>12}", type, "best [ms]", "median [ms]", "per point [ns]", "Mpoints/s");
-		printEvaluationRow("direct", c.direct, count);
-		printEvaluationRow("basis", c.basis, count);
-		printEvaluationRow("curve", c.curve, count);
-		printEvaluationRow("lookup", c.lookup, count);
-		std::println("    {:<9}{:>9}{:>13}{:>13}{:>20}{:>13}", "", "speedup", "precomp [us]", "memory [KB]", "pays off after", "max diff");
-		printPrecomputation(c.direct, {"basis", c.basis, c.basisBuildSeconds + c.invHBuildSeconds, basisKilobytes, c.basisDifference}, count);
-		printPrecomputation(c.direct, {"curve", c.curve, c.curveBuildSeconds + c.invHBuildSeconds, curveKilobytes, c.curveDifference}, count);
-		printPrecomputation(c.direct, {"lookup", c.lookup, c.curveBuildSeconds + c.lookupBuildSeconds + c.invHBuildSeconds, curveKilobytes + lookupKilobytes, c.lookupDifference}, count);
-		return c;
+		std::println("METHODS");
+		std::println("  direct  every point: findSpan, basisFunctions (A2.2), weighted sum");
+		std::println("  basis   basis polynomials of all spans built once; per point: findSpan, Horner per basis function, weighted sum");
+		std::println("  curve   basis x control points (the curve per span) built once; per point: findSpan, one 4D Horner");
+		std::println("  lookup  curve table, with the span from a lookup table instead of the binary search");
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// The checksums only make sure the compiler cannot skip the work; all four should match.
-	void printChecksums(MethodTimes const& floats, MethodTimes const& doubles)
+	// One type's columns of the time per point section.
+	std::string timeColumns(EvaluationTimes const& t, EvaluationTimes const& direct, std::size_t count, bool isDirect)
+	{
+		double const n = static_cast<double>(count);
+		std::string const relative = isDirect ? std::string("reference") : bench::speedInWords(direct.bestSeconds, t.bestSeconds);
+		return std::format("{:>10.2f}{:>13.2f}{:>11.1f}  {:<13}", t.bestSeconds * 1e9 / n, t.medianSeconds * 1e9 / n, n / t.bestSeconds / 1e6, relative);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	void printTimeSection(MethodTimes const& f, MethodTimes const& d, std::size_t count)
 	{
 		std::println();
-		std::println("  checksums  float  {:.6e} (direct)  {:.6e} (basis)  {:.6e} (curve)  {:.6e} (lookup)", floats.direct.checksum, floats.basis.checksum, floats.curve.checksum, floats.lookup.checksum);
-		std::println("             double {:.6e} (direct)  {:.6e} (basis)  {:.6e} (curve)  {:.6e} (lookup)", doubles.direct.checksum, doubles.basis.checksum, doubles.curve.checksum, doubles.lookup.checksum);
+		std::println("TIME PER POINT  (best and median of {} runs, after one warm-up run)", kRuns);
+		std::println("  {:<8}{:-^49}  {:-^49}", "", " float ", " double ");
+		std::println("  {:<8}{:>10}{:>13}{:>11}  {:<13}  {:>10}{:>13}{:>11}  {}", "", "best [ns]", "median [ns]", "Mpoints/s", "vs direct", "best [ns]", "median [ns]", "Mpoints/s", "vs direct");
+		std::println("  {:<8}{}  {}", "direct", timeColumns(f.direct, f.direct, count, true), timeColumns(d.direct, d.direct, count, true));
+		std::println("  {:<8}{}  {}", "basis", timeColumns(f.basis, f.direct, count, false), timeColumns(d.basis, d.direct, count, false));
+		std::println("  {:<8}{}  {}", "curve", timeColumns(f.curve, f.direct, count, false), timeColumns(d.curve, d.direct, count, false));
+		std::println("  {:<8}{}  {}", "lookup", timeColumns(f.lookup, f.direct, count, false), timeColumns(d.lookup, d.direct, count, false));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// One type's columns of the precomputation section.
+	std::string precomputationColumns(EvaluationTimes const& direct, Precomputation const& method, std::size_t count)
+	{
+		return std::format("{:>11.1f}{:>12.1f}{:>20}", method.seconds * 1e6, method.kilobytes, paysOffAfter(direct, method, count));
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	void printPrecomputationSection(std::span<Precomputation const> f, std::span<Precomputation const> d, EvaluationTimes const& floatDirect, EvaluationTimes const& doubleDirect, std::size_t count)
+	{
+		std::println();
+		std::println("PRECOMPUTATION  (what each method builds before its first point)");
+		std::println("  build [us]      everything built, incl. the 1 / h array; best of at least {} runs and {} s", kRuns, bench::kMinSeconds);
+		std::println("                  basis: basis table; curve: curve table, its basis table built inside; lookup: curve table + lookup table");
+		std::println("  memory [KB]     what queries keep: those tables and the 1 / h array (lookup: 2 cells per span)");
+		std::println("  pays off after  build time divided by the time saved per point against direct");
+		std::println("  {:<8}{:-^43}  {:-^43}", "", " float ", " double ");
+		std::println("  {:<8}{:>11}{:>12}{:>20}  {:>11}{:>12}{:>20}", "", "build [us]", "memory [KB]", "pays off after", "build [us]", "memory [KB]", "pays off after");
+		for (std::size_t k = 0; k < f.size(); ++k)
+		{
+			std::println("  {:<8}{}  {}", f[k].name, precomputationColumns(floatDirect, f[k], count), precomputationColumns(doubleDirect, d[k], count));
+		}
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	void printAgreementRow(std::string_view name, std::string_view floatDistance, double floatChecksum, std::string_view doubleDistance, double doubleChecksum)
+	{
+		std::println("  {:<8}{:>14}{:>16.6e}  {:>14}{:>16.6e}", name, floatDistance, floatChecksum, doubleDistance, doubleChecksum);
+	}
+	
+/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+	
+	// The distances are printed as text so that direct's row can show "reference".
+	void printAgreementSection(MethodTimes const& f, MethodTimes const& d)
+	{
+		auto const distance = [](double value) { return std::format("{:.1e}", value); };
+		std::println();
+		std::println("AGREEMENT WITH DIRECT  (largest distance from direct's points; the checksums sum all points and should match)");
+		std::println("  {:<8}{:-^30}  {:-^30}", "", " float ", " double ");
+		std::println("  {:<8}{:>14}{:>16}  {:>14}{:>16}", "", "max distance", "checksum", "max distance", "checksum");
+		printAgreementRow("direct", "reference", f.direct.checksum, "reference", d.direct.checksum);
+		printAgreementRow("basis", distance(f.basisDifference), f.basis.checksum, distance(d.basisDifference), d.basis.checksum);
+		printAgreementRow("curve", distance(f.curveDifference), f.curve.checksum, distance(d.curveDifference), d.curve.checksum);
+		printAgreementRow("lookup", distance(f.lookupDifference), f.lookup.checksum, distance(d.lookupDifference), d.lookup.checksum);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -385,9 +411,11 @@ int main(int argc, char* argv[])
 	{
 		writeCurveSvg(argv[0], degree, options.numKnots);
 	}
-	printMethodsHeader(options.count, degree, options.numKnots);
-	MethodTimes const floats  = compareMethods<float >("float" , degree, options.numKnots, options.count);
-	MethodTimes const doubles = compareMethods<double>("double", degree, options.numKnots, options.count);
-	printChecksums(floats, doubles);
+	MethodTimes const floats = measureMethods<float>(degree, options.numKnots, options.count);
+	MethodTimes const doubles = measureMethods<double>(degree, options.numKnots, options.count);
+	printHeader(options.count, degree, options.numKnots);
+	printTimeSection(floats, doubles, options.count);
+	printPrecomputationSection(tableMethods<float>(floats, degree, options.numKnots), tableMethods<double>(doubles, degree, options.numKnots), floats.direct, doubles.direct, options.count);
+	printAgreementSection(floats, doubles);
 	return 0;
 }
