@@ -10,6 +10,7 @@
 #include "test_curves.hpp"
 #include "geom/basis.hpp"
 #include "geom/curve_table.hpp"
+#include "geom/inverse_span_lengths.hpp"
 #include "geom/nurbs_curve.hpp"
 #include "geom/span_lookup.hpp"
 
@@ -140,10 +141,11 @@ namespace
 		geom::NurbsCurve<double> const curve = test::rationalCurve<double>(3, {0, 0, 0, 0, 0.1, 0.15, 0.6, 0.6, 0.9, 1, 1, 1, 1});
 		geom::CurveTable const table(curve);
 		SpanLookup const lookup(curve);
+		Values const inverseSpanLengths = geom::buildInverseSpanLengths<double>(curve.degree(), curve.knots());
 		for (int k = 0; k <= 1000; ++k)
 		{
 			double const u = k / 1000.0;
-			CHECK(test::nearPoint(geom::curvePointFromTable(curve, table, lookup, u), curve(u), 1e-12));
+			CHECK(test::nearPoint(geom::curvePointFromTable(curve, table, inverseSpanLengths, lookup, u), curve(u), 1e-12));
 		}
 	}
 	

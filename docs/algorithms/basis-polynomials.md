@@ -114,9 +114,20 @@ is `O(p)`).
 - One row per span index `j = p .. n` (`n + 1 - p` rows, row = `j - p`), so `findSpan` gives the
   row directly. Zero-length spans (repeated knots) get a row too but are never used, because
   `findSpan` never returns them. This wastes a little memory and keeps indexing simple.
-- Per row: `u_j`, `1 / h_j`, and `A_j[0..p]` as `Point4<T>` (aligned like `float4`).
+- Per row: `A_j[0..p]` as `Point4<T>` (aligned like `float4`). A query also needs `u_j` and `1 / h_j`,
+  which depend only on the knots and are kept outside the tables (see "The 1 / h array").
 - The basis table `(p + 1) x (p + 1)` per span is an intermediate result. It is kept (and
   downloaded) only for testing against `basisFunctions`.
+
+## The 1 / h array
+
+`1 / h_j = 1 / (u_{j+1} - u_j)` (0 for an empty span) is used only by queries, to get
+`t = (u - u_j) * invH_j`; building the tables does not need it. It depends only on the knots, so there is
+one array per knot vector, owned by the caller and passed to the queries, not one copy per table:
+`buildInverseSpanLengths` / `fillInverseSpanLengths` (`inverse_span_lengths.hpp`) on the CPU and
+`buildInverseSpanLengthsOnDevice` / `fillInverseSpanLengthsOnDevice` (`inverse_span_lengths_gpu.cu`, one thread
+per span) on the GPU. Both call `detail::inverseSpanLength`. The array must stay alive as long as the tables are
+queried, as the knots must. Rebuilding a table after the control points change does not touch it.
 
 ## GPU mapping (first version)
 
@@ -133,7 +144,7 @@ is `O(p)`).
 ## Evaluation from the basis table (implemented, CPU)
 
 `BasisTable<T>` (`basis_table.hpp`) holds, for every span `j = p..n` (row `j - p`), the span's
-`(p + 1) x (p + 1)` basis coefficients (layout as in `basis_polynomials.hpp`) and `1 / h_j`. Built once
+`(p + 1) x (p + 1)` basis coefficients (layout as in `basis_polynomials.hpp`). Built once
 per curve; empty spans (repeated knots) stay 0 and are never used. A point is then
 
     j = findSpan(u);  t = (u - u_j) * invH_j;
@@ -144,7 +155,7 @@ per curve; empty spans (repeated knots) stay 0 and are never used. A point is th
 (`detail::weightedSum`), so the two methods differ only in how the `N_r` are found.
 Work per point: binary search, `p (p + 1)` multiply-adds for the `N_r` (no divisions), plus the
 weighted sum `4 (p + 1)`; A2.2 instead does `O(p^2)` work with `p (p + 1) / 2` divisions.
-Memory: `(p + 1)^2 + 1` values per span (17 for `p = 3`, 101 for `p = 9`).
+Memory: `(p + 1)^2` values per span, plus one for the 1 / h array (17 for `p = 3`, 101 for `p = 9`).
 
 ## Evaluation from a curve table (implemented, CPU)
 
@@ -154,11 +165,11 @@ point needs no basis functions at all:
     A_j[d] = sum_r c(r, d) * Pw[j-p+r]          (built once, per span and power d)
     j = findSpan(u);  t = (u - u_j) * invH_j;  Cw = Horner(A_j, t);  C = Cw / w
 
-`CurveTable<T>` (`curve_table.hpp`) stores per span the `p + 1` weighted points `A_j[0..p]` and `1 / h_j`
+`CurveTable<T>` (`curve_table.hpp`) stores per span the `p + 1` weighted points `A_j[0..p]`
 (same row layout as `BasisTable`). It is built from a `BasisTable` and the weighted control points, or
 directly from a curve. `curvePointFromCurveTable` evaluates it (`GEOM_HD`, no allocation).
 Work per point: binary search plus `4p` multiply-adds, instead of A2.2 (`O(p^2)`, with divisions) plus
-the weighted sum `4(p + 1)`. Memory per span: `4(p + 1) + 1` values (17 for `p = 3`, same as the basis
+the weighted sum `4(p + 1)`. Memory per span: `4(p + 1)` values, plus one for the 1 / h array (17 for `p = 3`, same as the basis
 table; 41 for `p = 9`, against 101).
 
 Trade-off against the basis table: the curve table depends on the control points and weights, so it

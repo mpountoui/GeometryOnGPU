@@ -38,8 +38,8 @@ namespace gpu
 		{
 			auto const p = static_cast<std::size_t>(table.degree);
 			bool const sameCurve = basis.degree == table.degree && basis.numSpans == table.numSpans && weightedPoints.size() == table.numSpans + p;
-			bool const allocated = table.coefficients.size() == table.numSpans * (p + 1) && table.inverseSpanLengths.size() == table.numSpans;
-			if (!sameCurve || !allocated || basis.inverseSpanLengths.size() != table.numSpans)
+			bool const allocated = table.coefficients.size() == table.numSpans * (p + 1);
+			if (!sameCurve || !allocated)
 			{
 				throw std::invalid_argument("fillCurveTableOnDevice: basis table, control points and curve table do not match");
 			}
@@ -52,14 +52,12 @@ namespace gpu
 	DeviceCurveTable<T> allocateCurveTableOnDevice(int degree, std::size_t numSpans)
 	{
 		auto const p = static_cast<std::size_t>(degree);
-		return {degree, numSpans, DeviceBuffer<geom::Point4<T>>(numSpans * (p + 1)), DeviceBuffer<T>(numSpans)};
+		return {degree, numSpans, DeviceBuffer<geom::Point4<T>>(numSpans * (p + 1))};
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Enough blocks to give every row a line of the block: ceil(numSpans / blockDim.y). The copy of 1 / h
-	// goes into the same queue (stream) as the kernel, so it runs after it; device-to-device cudaMemcpy
-	// does not make the CPU wait.
+	// Enough blocks to give every row a line of the block: ceil(numSpans / blockDim.y).
 	template <std::floating_point T>
 	void fillCurveTableOnDevice(DeviceBasisTable<T> const& basis, DeviceBuffer<geom::Point4<T>> const& weightedPoints, DeviceCurveTable<T>& table)
 	{
@@ -69,7 +67,6 @@ namespace gpu
 		dim3 const grid(static_cast<unsigned int>((table.numSpans + block.y - 1) / block.y));
 		curveTableKernel<T><<<grid, block>>>(table.degree, table.numSpans, basis.coefficients.data(), weightedPoints.data(), table.coefficients.data());
 		checkLaunch();
-		checkCuda(cudaMemcpy(table.inverseSpanLengths.data(), basis.inverseSpanLengths.data(), basis.inverseSpanLengths.sizeBytes(), cudaMemcpyDeviceToDevice));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

@@ -16,7 +16,7 @@ namespace gpu
 		// One thread per row of the table: thread `row` fills span row + p, exactly as one iteration of
 		// the loop in the BasisTable constructor. The pointers are device memory.
 		template <std::floating_point T>
-		__global__ void basisTableKernel(int degree, T const* knots, std::size_t numKnots, std::size_t numSpans, T* coefficients, T* inverseSpanLengths)
+		__global__ void basisTableKernel(int degree, T const* knots, std::size_t numKnots, std::size_t numSpans, T* coefficients)
 		{
 			std::size_t const row = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
 			if (row >= numSpans)
@@ -25,7 +25,7 @@ namespace gpu
 			}
 			auto const p = static_cast<std::size_t>(degree);
 			std::size_t const tableSize = numSpans * (p + 1) * (p + 1);
-			geom::detail::buildBasisRow<T>(row, degree, std::span<T const>(knots, numKnots), std::span<T>(coefficients, tableSize), std::span<T>(inverseSpanLengths, numSpans));
+			geom::detail::buildBasisRow<T>(row, degree, std::span<T const>(knots, numKnots), std::span<T>(coefficients, tableSize));
 		}
 	}  // namespace
 	
@@ -37,7 +37,7 @@ namespace gpu
 	{
 		auto const p = static_cast<std::size_t>(degree);
 		std::size_t const numSpans = numKnots - 2 * p - 1;
-		return {degree, numSpans, DeviceBuffer<T>(numSpans * (p + 1) * (p + 1)), DeviceBuffer<T>(numSpans)};
+		return {degree, numSpans, DeviceBuffer<T>(numSpans * (p + 1) * (p + 1))};
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -48,12 +48,12 @@ namespace gpu
 	{
 		auto const p = static_cast<std::size_t>(table.degree);
 		std::size_t const numSpans = table.numSpans;
-		if (knots.size() != numSpans + 2 * p + 1 || table.coefficients.size() != numSpans * (p + 1) * (p + 1) || table.inverseSpanLengths.size() != numSpans)
+		if (knots.size() != numSpans + 2 * p + 1 || table.coefficients.size() != numSpans * (p + 1) * (p + 1))
 		{
 			throw std::invalid_argument("fillBasisTableOnDevice: table allocated for a different number of knots");
 		}
 		auto const blocks = static_cast<unsigned int>((numSpans + kThreadsPerBlock - 1) / kThreadsPerBlock);
-		basisTableKernel<T><<<blocks, kThreadsPerBlock>>>(table.degree, knots.data(), knots.size(), numSpans, table.coefficients.data(), table.inverseSpanLengths.data());
+		basisTableKernel<T><<<blocks, kThreadsPerBlock>>>(table.degree, knots.data(), knots.size(), numSpans, table.coefficients.data());
 		checkLaunch();
 	}
 	

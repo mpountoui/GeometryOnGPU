@@ -106,7 +106,7 @@ Observations:
 ## Curve table with a span lookup table (`bench_curve_point`, since 2026-10-26)
 
 Fourth method **lookup**: the curve table, with the span from a `SpanLookup` table (2 cells per span)
-instead of `findSpan`'s binary search (`curvePointFromTable(curve, table, lookup, u)`; see
+instead of `findSpan`'s binary search (`curvePointFromTable(curve, table, invH, lookup, u)`; see
 `docs/algorithms/span-lookup.md`). The build time shown is the lookup table's alone.
 
 ### 2026-10-26, Apple M1 (1 core), Apple clang 21, `-O3 -DNDEBUG`, N = 1,000,000, ns per point (float / double)
@@ -176,8 +176,9 @@ Observations:
 
 ## GPU table builds, CPU vs GPU (`bench_curve_point` with CUDA, since 2026-11-07)
 
-The last part of `bench_curve_point` builds the `BasisTable` and the `CurveTable` on the CPU (1 thread) and on
-the GPU (`src/gpu/basis_table_gpu.cu`, `curve_table_gpu.cu`). Each row compares the same work on both:
+The last part of `bench_curve_point` builds the `BasisTable`, the 1 / h array and the `CurveTable` on the CPU
+(1 thread) and on the GPU (`src/gpu/basis_table_gpu.cu`, `inverse_span_lengths_gpu.cu`, `curve_table_gpu.cu`).
+Each row compares the same work on both:
 
 - **Rebuild**: memory allocated beforehand and reused, as in a program that rebuilds a table whenever the
   curve changes. CPU: `fillBasisTable` / `fillCurveTable` into existing vectors.
@@ -189,13 +190,111 @@ the GPU (`src/gpu/basis_table_gpu.cu`, `curve_table_gpu.cu`). Each row compares 
 
 Sections: **basis table** (knots -> basis table); **curve table, stage 2 only** (basis table -> curve table,
 basis table already built: the work the curve kernel does); **curve table, whole job** (knots + control
-points -> curve table). The resulting table is never freed inside the timed region (the caller keeps it),
+points -> curve table and 1 / h, what a query needs; since 2026-11-08); **1 / h array** (knots -> 1 / h). The resulting table is never freed inside the timed region (the caller keeps it),
 but a build once's temporaries are, as a one-off build pays for them before it returns: the CPU
 `CurveTable(curve)` frees its `BasisTable`, the GPU incl. copies `cudaFree`s all its device buffers (its
 result is the downloaded host table). Every time is the best of at least 5 runs and 0.2 s (`bestOf`);
 first build is one run.
 
+### 2026-11-08, RTX 4000 Ada (sm_89) and AMD EPYC 7702 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds
+
+Each value is the median of three program runs. Kernel-only rows of a few microseconds differ by up to ~50% between
+runs, build once rows at 1M spans by up to ~1.6x their median, and first builds vary most (the range of one row reaches 8x its median).
+
+Basis table (knots -> basis table, without 1 / h):
+
+| spans | comparison | float CPU | float GPU | GPU is | double CPU | double GPU | GPU is |
+|---|---|---|---|---|---|---|---|
+| 97 | Rebuild, computation only | 6.0 | 10.7 | 1.8x slower | 6.6 | 24.8 | 3.8x slower |
+|  | Rebuild, incl. copies CPU <-> GPU | 6.0 | 18.9 | 3.1x slower | 6.6 | 33.8 | 5.1x slower |
+|  | Build once, computation only | 6.1 | 14.9 | 2.4x slower | 6.7 | 28.5 | 4.3x slower |
+|  | Build once, incl. copies CPU <-> GPU | 6.1 | 27.4 | 4.5x slower | 6.7 | 42.0 | 6.3x slower |
+|  | First build in this program | 6.1 | 226,657 | 37,157x slower | 6.7 | 533.5 | 80x slower |
+| 9,997 | Rebuild, computation only | 624.8 | 24.4 | 26x faster | 686.7 | 47.6 | 14x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 624.8 | 124.2 | 5.0x faster | 686.7 | 231.4 | 3.0x faster |
+|  | Build once, computation only | 633.6 | 28.2 | 22x faster | 707.5 | 51.3 | 14x faster |
+|  | Build once, incl. copies CPU <-> GPU | 633.6 | 145.8 | 4.3x faster | 707.5 | 254.1 | 2.8x faster |
+|  | First build in this program | 633.6 | 221,786 | 350x slower | 707.5 | 1,394 | 2.0x slower |
+| 99,997 | Rebuild, computation only | 6,274 | 187.4 | 33x faster | 6,911 | 347.4 | 20x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 6,274 | 803.2 | 7.8x faster | 6,911 | 1,493 | 4.6x faster |
+|  | Build once, computation only | 6,399 | 367.6 | 17x faster | 7,247 | 637.7 | 11x faster |
+|  | Build once, incl. copies CPU <-> GPU | 6,399 | 1,276 | 5.0x faster | 7,247 | 2,391 | 3.0x faster |
+|  | First build in this program | 6,399 | 233,334 | 36x slower | 7,247 | 10,257 | 1.4x slower |
+| 999,997 | Rebuild, computation only | 62,994 | 1,762 | 36x faster | 69,159 | 2,823 | 24x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 62,994 | 8,284 | 7.6x faster | 69,159 | 15,761 | 4.4x faster |
+|  | Build once, computation only | 98,030 | 2,325 | 42x faster | 139,352 | 3,392 | 41x faster |
+|  | Build once, incl. copies CPU <-> GPU | 98,030 | 51,266 | 1.9x faster | 139,352 | 100,439 | 1.4x faster |
+|  | First build in this program | 98,030 | 292,386 | 3.0x slower | 139,352 | 89,003 | 1.6x faster |
+
+Curve table, stage 2 only (basis table -> curve table; basis table already built):
+
+| spans | comparison | float CPU | float GPU | GPU is | double CPU | double GPU | GPU is |
+|---|---|---|---|---|---|---|---|
+| 97 | Rebuild, computation only | 1.2 | 4.6 | 3.8x slower | 1.5 | 5.1 | 3.4x slower |
+|  | Build once, computation only | 1.5 | 7.9 | 5.3x slower | 1.8 | 9.2 | 5.1x slower |
+| 9,997 | Rebuild, computation only | 129.0 | 4.6 | 28x faster | 157.2 | 9.8 | 16x faster |
+|  | Build once, computation only | 153.5 | 8.6 | 18x faster | 182.5 | 185.1 | 1.0x slower |
+| 99,997 | Rebuild, computation only | 1,336 | 10.7 | 125x faster | 1,674 | 54.2 | 31x faster |
+|  | Build once, computation only | 1,580 | 191.8 | 8.2x faster | 2,346 | 248.5 | 9.4x faster |
+| 999,997 | Rebuild, computation only | 13,718 | 458.8 | 30x faster | 17,336 | 908.7 | 19x faster |
+|  | Build once, computation only | 50,716 | 658.1 | 77x faster | 89,399 | 1,140 | 78x faster |
+
+Curve table, whole job (curve: knots + control points -> curve table and 1 / h):
+
+| spans | comparison | float CPU | float GPU | GPU is | double CPU | double GPU | GPU is |
+|---|---|---|---|---|---|---|---|
+| 97 | Rebuild, incl. copies CPU <-> GPU | 7.4 | 35.8 | 4.8x slower | 8.2 | 52.3 | 6.4x slower |
+|  | Build once, incl. copies CPU <-> GPU | 7.6 | 382.7 | 50x slower | 8.8 | 397.3 | 45x slower |
+|  | First build in this program | 7.6 | 729.9 | 96x slower | 8.8 | 554.8 | 63x slower |
+| 9,997 | Rebuild, incl. copies CPU <-> GPU | 766.2 | 167.5 | 4.6x faster | 860.2 | 299.6 | 2.9x faster |
+|  | Build once, incl. copies CPU <-> GPU | 790.4 | 514.1 | 1.5x faster | 907.2 | 955.2 | 1.1x slower |
+|  | First build in this program | 790.4 | 688.2 | 1.1x faster | 907.2 | 1,266 | 1.4x slower |
+| 99,997 | Rebuild, incl. copies CPU <-> GPU | 7,715 | 1,045 | 7.4x faster | 8,765 | 2,117 | 4.1x faster |
+|  | Build once, incl. copies CPU <-> GPU | 8,165 | 2,651 | 3.1x faster | 17,422 | 4,199 | 4.1x faster |
+|  | First build in this program | 8,165 | 6,615 | 1.2x faster | 17,422 | 11,569 | 1.5x faster |
+| 999,997 | Rebuild, incl. copies CPU <-> GPU | 78,097 | 10,462 | 7.5x faster | 89,179 | 18,962 | 4.7x faster |
+|  | Build once, incl. copies CPU <-> GPU | 157,130 | 50,165 | 3.1x faster | 245,623 | 96,584 | 2.5x faster |
+|  | First build in this program | 157,130 | 53,232 | 3.0x faster | 245,623 | 99,090 | 2.5x faster |
+
+The 1 / h array (knots -> 1 / h):
+
+| spans | comparison | float CPU | float GPU | GPU is | double CPU | double GPU | GPU is |
+|---|---|---|---|---|---|---|---|
+| 97 | Rebuild, computation only | 0.1 | 3.1 | 31x slower | 0.2 | 4.7 | 24x slower |
+|  | Rebuild, incl. copies CPU <-> GPU | 0.1 | 12.8 | 128x slower | 0.2 | 12.5 | 62x slower |
+|  | Build once, computation only | 0.1 | 7.7 | 77x slower | 0.2 | 8.1 | 40x slower |
+|  | Build once, incl. copies CPU <-> GPU | 0.1 | 21.2 | 212x slower | 0.2 | 21.4 | 107x slower |
+| 9,997 | Rebuild, computation only | 10.5 | 4.4 | 2.4x faster | 15.0 | 4.6 | 3.3x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 10.5 | 19.1 | 1.8x slower | 15.0 | 33.5 | 2.2x slower |
+|  | Build once, computation only | 10.9 | 7.7 | 1.4x faster | 15.8 | 8.0 | 2.0x faster |
+|  | Build once, incl. copies CPU <-> GPU | 10.9 | 29.7 | 2.7x slower | 15.8 | 44.0 | 2.8x slower |
+| 99,997 | Rebuild, computation only | 104.7 | 4.4 | 24x faster | 149.6 | 8.0 | 19x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 104.7 | 121.1 | 1.2x slower | 149.6 | 228.8 | 1.5x slower |
+|  | Build once, computation only | 109.9 | 8.3 | 13x faster | 161.7 | 11.7 | 14x faster |
+|  | Build once, incl. copies CPU <-> GPU | 109.9 | 122.0 | 1.1x slower | 161.7 | 552.9 | 3.4x slower |
+| 999,997 | Rebuild, computation only | 1,053 | 8.9 | 118x faster | 1,525 | 40.3 | 38x faster |
+|  | Rebuild, incl. copies CPU <-> GPU | 1,053 | 734.9 | 1.4x faster | 1,525 | 1,393 | 1.1x faster |
+|  | Build once, computation only | 1,122 | 188.8 | 5.9x faster | 1,713 | 219.7 | 7.8x faster |
+|  | Build once, incl. copies CPU <-> GPU | 1,122 | 1,534 | 1.4x slower | 1,713 | 2,571 | 1.5x slower |
+
+Largest |GPU - CPU| coefficient: basis 2.4e-7 (float), 4.4e-16 (double); curve up to 1.8e-2 (float), 4.4e-11
+(double) at 1M spans, as on 2026-11-07. The 1 / h values are identical on both sides (`test_inverse_span_lengths_gpu`).
+
+Observations:
+
+- The 1 / h kernel is one launch: 3-9 us in float up to 1M spans (rebuild). On the CPU the array costs about 1 ns per span
+  (float), about 1.3% of the whole job at 1M spans. So on the CPU it hardly matters where it is computed.
+- At 97 spans the launch makes the GPU about 30-50x (float) slower for this array alone; from 10k spans the kernel is
+  faster than the CPU. With copies the download dominates, and is only needed if the queries run on the CPU.
+- Whole job, rebuild, float: GPU 4.6-7.5x faster than the CPU from 10k spans (double 2.9-4.7x), 4.8x slower at 97 spans.
+- These numbers come from a different GPU and CPU than the 2026-11-07 tables, so do not compare across the two.
+  Same machine, before and after, at 97 spans (float, one run before): stage 2 rebuild went from 8.5 to about 4.7 us
+  without the copy; whole job rebuild went from 32.7 to about 36-38 us (one more launch and a download).
+
 ### 2026-11-07, RTX A4500 (sm_86, 640 GB/s) and AMD EPYC 7352 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds
+
+Measured before the 1 / h array was split off (2026-11-08): the basis table rows include computing 1 / h on
+both sides, the stage 2 rows a copy of it, and the whole job has no separate 1 / h kernel.
 
 Each value is the median of three program runs. Rebuild rows agree within a few percent between runs.
 Build once rows include allocation and vary more, up to ~25%, and more for large double tables on the GPU

@@ -19,6 +19,7 @@ Update the status column when a step is done, and record agreed decisions below.
 | 1c | Profile the basis table kernel with `ncu`: confirm why it is ~10x slower than its memory limit | Nsight Compute, memory throughput, coalescing | postponed: profile with step 2's kernel |
 | 2 | Curve table kernel, one thread per `(span, d)`, reading the basis table on the device | 2D indexing, coalesced memory access | done 2026-11-01 |
 | 2b | GPU curve table build in `bench_curve_point`, as in step 1b, against the CPU curve stage and the full CPU build | Choosing a fair baseline | done 2026-11-07 |
+| 2c | One 1 / h array per knot vector, owned by neither table (CPU and GPU), with its own kernel | Removing a copy by changing who owns the data | done 2026-11-08 |
 | 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | |
 | 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | |
 | 5 | Basis table kernel with one block per span, levels in shared memory | `__shared__`, `__syncthreads()`, warps | |
@@ -86,10 +87,9 @@ Findings (2026-10-26, RTX 2000 Ada):
   numbered x-first, so a warp writes 32 neighbouring `Point4`s (coalesced), unlike step 1.
 - `gpu::DeviceCurveTable<T>` (degree, numSpans, `DeviceBuffer<Point4<T>>` coefficients, `DeviceBuffer<T>`
   inverse span lengths), with `allocate`/`fill`/`build` functions as in step 1.
-- The 1/h values are copied from the `DeviceBasisTable` with a device-to-device `cudaMemcpy` after the
+- The 1/h values were copied from the `DeviceBasisTable` with a device-to-device `cudaMemcpy` after the
   launch (the kernel only computes `A_j[d]`, the basis table stays intact for other curves with the same
-  knots). Revisit in step 3: 1/h depends only on the knots, as does the span lookup, so a caller-owned
-  `Knots`/`DeviceKnots` (knots, 1/h, lookup cells) shared by both tables may be cleaner (CPU and GPU together).
+  knots). Replaced in step 2c by one array owned by neither table.
 - Test `test_curve_table_gpu.cpp`: GPU basis table + GPU curve table against the CPU `CurveTable`, same curves
   as step 1, float and double, ulp tolerance per row; `dirtyDeviceMemory` and `checkRow` move to a shared
   test header.
@@ -109,7 +109,7 @@ Findings (2026-11-01, RTX A4000):
   `GpuCurveBuild`). Two CPU baselines, so each GPU row is compared with the same work: the CPU curve stage
   alone (`CurveTable(basis, points)`, basis table built before) for kernel only and allocate + kernel; the
   full `CurveTable(curve)` for upload/build/download and first call.
-- Kernel only includes the device-to-device copy of 1/h inside `fillCurveTableOnDevice` (same stream).
+- Kernel only includes the device-to-device copy of 1/h inside `fillCurveTableOnDevice` (same stream; removed in step 2c).
 - All GPU sections are measured before anything is printed, so float's first basis table call still
   pays for the CUDA context.
 
@@ -128,3 +128,23 @@ Findings (2026-11-07, RTX A4500; details and numbers in `docs/benchmarks.md`):
 - `cudaMalloc` maps a new 2 MB chunk when an allocation does not fit in an already mapped one (~130 us).
 - The printed output and `docs/benchmarks.md` show one comparison per row (same work on CPU and GPU, float and
   double side by side, "Nx faster/slower"), with a legend, so they can be read without the code.
+
+## Step 2c: agreed decisions (implemented)
+
+- Neither table needs 1/h to build it, only queries do, and it depends only on the knots. So there is one array
+  per knot vector, owned by the caller: `std::vector<T>` from `geom::buildInverseSpanLengths` on the CPU,
+  `DeviceBuffer<T>` from `gpu::buildInverseSpanLengthsOnDevice` on the GPU. No `cudaMemcpy`, no struct around it.
+- Both sides changed together, so the CPU and GPU rows of the benchmark do the same work. Queries that take a
+  table object take the array too: `curvePointFromTable(curve, table, invH, u)`.
+- `detail::inverseSpanLength` is the shared `GEOM_HD` per-span function; `buildBasisRow` writes coefficients only.
+- Its own kernel, one thread per span. Costs one more launch whenever the knots change; step 6 (fuse kernels)
+  can remove it. A rebuild after only the control points change does less work than before.
+- Grouping knots, 1/h and lookup cells in a `Knots`/`DeviceKnots` is left to step 3, when the lookup cells give it
+  more than one array to hold.
+
+Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
+
+- The 1/h kernel takes 3-9 us (float, rebuild) up to 1M spans, so it costs about one launch.
+- Without the copy the curve kernel (stage 2, rebuild, 97 spans, float) went from 8.5 to about 4.7 us. Whole job with
+  copies, same size: 32.7 to about 36-38 us, because the extra launch and download outweigh the removed copy at this
+  size (before: a single run on the same machine).

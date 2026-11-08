@@ -56,14 +56,12 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Downloads the GPU table and compares it with the CPU one. 1 / h is one correctly rounded division
-	// on both sides, so it must be identical.
+	// Downloads the GPU table and compares it with the CPU one.
 	template <std::floating_point T>
 	void checkTable(BasisTable<T> const& cpu, gpu::DeviceBasisTable<T> const& table)
 	{
 		CHECK(table.degree == cpu.degree());
 		CHECK(table.numSpans == cpu.numSpans());
-		CHECK(table.inverseSpanLengths.download() == std::vector<T>(cpu.inverseSpanLengths().begin(), cpu.inverseSpanLengths().end()));
 		checkCoefficients(cpu, table.coefficients.download());
 	}
 	

@@ -8,6 +8,7 @@
 #include "test_curves.hpp"
 #include "geom/basis_polynomials.hpp"
 #include "geom/basis_table.hpp"
+#include "geom/inverse_span_lengths.hpp"
 #include "geom/nurbs_curve.hpp"
 
 using geom::BasisTable;
@@ -30,11 +31,12 @@ namespace
 	void checkAgainstCurve(NurbsCurve<T> const& curve, T tolerance)
 	{
 		BasisTable const table(curve);
+		std::vector<T> const inverseSpanLengths = geom::buildInverseSpanLengths<T>(curve.degree(), curve.knots());
 		auto const [a, b] = curve.domain();
 		for (int k = 0; k <= 1000; ++k)
 		{
 			T const u = (k == 1000) ? b : a + (b - a) * static_cast<T>(k) / T{1000};
-			CHECK(nearPoint(geom::curvePointFromTable(curve, table, u), curve(u), tolerance));
+			CHECK(nearPoint(geom::curvePointFromTable(curve, table, inverseSpanLengths, u), curve(u), tolerance));
 		}
 	}
 	
@@ -47,12 +49,10 @@ namespace
 		BasisTable<double> const table(2, knots);
 		CHECK(table.numSpans() == 6);
 		CHECK(table.coefficients().size() == 6 * 9);
-		CHECK(table.inverseSpanLengths()[6 - 2] == 0.0);
 		for (double const c : table.spanCoefficients(6))
 		{
 			CHECK(c == 0.0);
 		}
-		CHECK(table.inverseSpanLengths()[7 - 2] == 1.0);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -81,13 +81,14 @@ namespace
 	{
 		Points const points{{0, 0, 0}, {1, 1, 0}, {3, 2, 0}, {4, 1, 0}, {5, -1, 0}};
 		NurbsCurve<double> const ex41(2, {0, 0, 0, 1, 2, 3, 3, 3}, points, Values{1, 4, 1, 1, 1});
-		CHECK(nearPoint(geom::curvePointFromTable(ex41, BasisTable(ex41), 1.0), Point3<double>{7.0 / 5, 6.0 / 5, 0}, kTol));
+		CHECK(nearPoint(geom::curvePointFromTable(ex41, BasisTable(ex41), geom::buildInverseSpanLengths<double>(ex41.degree(), ex41.knots()), 1.0), Point3<double>{7.0 / 5, 6.0 / 5, 0}, kTol));
 		Points const quarter{{1, 0, 0}, {1, 1, 0}, {0, 1, 0}};
 		NurbsCurve<double> const circle(2, {0, 0, 0, 1, 1, 1}, quarter, Values{1, std::numbers::sqrt2 / 2, 1});
 		BasisTable const table(circle);
+		Values const inverseSpanLengths = geom::buildInverseSpanLengths<double>(circle.degree(), circle.knots());
 		for (int k = 0; k <= 100; ++k)
 		{
-			Point3<double> const c = geom::curvePointFromTable(circle, table, k / 100.0);
+			Point3<double> const c = geom::curvePointFromTable(circle, table, inverseSpanLengths, k / 100.0);
 			CHECK(test::near(c.x * c.x + c.y * c.y, 1.0, kTol));
 		}
 	}
@@ -114,10 +115,8 @@ namespace
 		NurbsCurve<double> const curve = rationalCurve<double>(2, {0, 0, 0, 1, 2, 3, 4, 4, 5, 5, 5});
 		BasisTable const table(curve);
 		std::vector<double> coefficients(table.coefficients().size(), std::numeric_limits<double>::quiet_NaN());
-		std::vector<double> inverseSpanLengths(table.numSpans(), std::numeric_limits<double>::quiet_NaN());
-		geom::fillBasisTable<double>(curve.degree(), curve.knots(), coefficients, inverseSpanLengths);
+		geom::fillBasisTable<double>(curve.degree(), curve.knots(), coefficients);
 		CHECK(std::ranges::equal(coefficients, table.coefficients()));
-		CHECK(std::ranges::equal(inverseSpanLengths, table.inverseSpanLengths()));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

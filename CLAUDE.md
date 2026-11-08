@@ -12,7 +12,7 @@ CMake (>= 3.24). CUDA is optional: without a CUDA compiler the project builds CP
 Tests and benchmarks use `<print>`, so the host compiler must be GCC >= 14 (or a recent Clang/libc++);
 on the NVIDIA Linux boxes (Ubuntu 24.04, default GCC 13) install `g++-14` and configure with
 `-DCMAKE_CXX_COMPILER=g++-14` (a fresh build dir: CMake caches the compiler).
-All boxes have nvcc 12.8. The RTX A4000 / A4500 (sm_86) and RTX 2000 Ada (sm_89) boxes work with `native`.
+All boxes have nvcc 12.8. The RTX A4000 / A4500 (sm_86) and RTX 2000 / 4000 Ada (sm_89) boxes work with `native`.
 The B300 box (sm_103) does not,
 because nvcc 12.8 does not know sm_103: there also pass `-DCMAKE_CUDA_ARCHITECTURES=100`
 (sm_100 code runs on sm_103). Drop this once CUDA is >= 12.9.
@@ -44,6 +44,8 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   (`CurveTable`: basis table times control points, the curve as one 4D polynomial per span;
   `curvePointFromCurveTable`, 2.7-15x faster than `curvePoint`; rebuild when control points change),
   both also as `fillBasisTable`/`fillCurveTable` into caller-owned memory (the constructors = allocate + fill),
+  `inverse_span_lengths.hpp` (the 1 / h of every span: one caller-owned array per knot vector, in no table,
+  used only by queries, so `curvePointFromTable(curve, table, invH, u)`),
   `span_lookup.hpp` (`SpanLookup`: finds the span in O(1) with a cell table, same result as `findSpan`;
   with the curve table about 4 ns per point independent of the number of knots).
   Each has a doc in `docs/algorithms/`.
@@ -62,6 +64,7 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
   Kernels live here too: `basis_table_gpu.hpp/.cu` builds a `BasisTable` on the GPU
   (`allocateBasisTableOnDevice` + `fillBasisTableOnDevice` (launch only, so it can be timed and reuse a
   table) = `buildBasisTableOnDevice`; one thread per span; result kept in device memory as `DeviceBasisTable`),
+  `inverse_span_lengths_gpu.hpp/.cu` builds the 1 / h array as a plain `DeviceBuffer<T>` the caller owns,
   and `curve_table_gpu.hpp/.cu` builds a `CurveTable` from a `DeviceBasisTable` and the control points
   (same allocate/fill/build split; one thread per coefficient `(span, d)` in 2D blocks; `DeviceCurveTable`).
   Pattern: the `.hpp` declares a host function with no CUDA syntax (so `.cpp` files can call it),

@@ -86,15 +86,13 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Downloads the GPU table and compares it with the CPU one. 1 / h is copied from the basis table, whose
-	// values equal the CPU's (test_basis_table_gpu.cpp), so it must be identical.
+	// Downloads the GPU table and compares it with the CPU one.
 	template <std::floating_point T>
 	void checkTable(BasisTable<T> const& basis, std::span<Point4<T> const> weightedPoints, gpu::DeviceCurveTable<T> const& table)
 	{
 		CurveTable<T> const cpu(basis, weightedPoints);
 		CHECK(table.degree == cpu.degree());
 		CHECK(table.numSpans == cpu.numSpans());
-		CHECK(table.inverseSpanLengths.download() == std::vector<T>(cpu.inverseSpanLengths().begin(), cpu.inverseSpanLengths().end()));
 		checkCoefficients<T>(basis, weightedPoints, cpu, table.coefficients.download());
 	}
 	

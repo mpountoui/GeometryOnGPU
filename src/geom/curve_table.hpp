@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <cassert>
 #include <concepts>
 #include <cstddef>
@@ -26,12 +25,11 @@ namespace geom
 	//   Cw(t) = sum_r N_{j-p+r,p}(t) Pw[j-p+r] = sum_d A_j[d] t^d,   A_j[d] = sum_r c(r, d) Pw[j-p+r]
 	//
 	// Layout: one row per span j = p..n (row j - p), as in BasisTable.
-	//   coefficients():       rows of p + 1 weighted points A_j[0..p] (A_j[d] multiplies t^d)
-	//   inverseSpanLengths(): 1 / (u_{j+1} - u_j), copied from the BasisTable
+	//   coefficients(): rows of p + 1 weighted points A_j[0..p] (A_j[d] multiplies t^d)
 	// Empty spans (repeated knots) keep zeros: findSpan never returns them.
 	//
 	// Unlike a BasisTable it depends on the control points and weights: rebuild it when they change.
-	// The knots are not stored: evaluate with the knots of the same curve.
+	// Neither the knots nor 1 / h (inverse_span_lengths.hpp) are stored: evaluate with those of the same curve.
 	template <std::floating_point T>
 	class CurveTable
 	{
@@ -49,7 +47,6 @@ namespace geom
 		std::size_t numSpans() const noexcept;
 		
 		std::span<Point4<T> const> coefficients() const noexcept;
-		std::span<T const> inverseSpanLengths() const noexcept;
 		
 		// A_j[0..p] of span j (p <= j <= n).
 		std::span<Point4<T> const> spanCoefficients(std::size_t span) const;
@@ -58,7 +55,6 @@ namespace geom
 		int m_degree{};
 		std::size_t m_numSpans{};
 		std::vector<Point4<T>> m_coefficients{};
-		std::vector<T> m_inverseSpanLengths{};
 	};
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -68,26 +64,26 @@ namespace geom
 	template <std::floating_point T>
 	GEOM_HD Point3<T> curvePointFromCurveTable(int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<Point4<T> const>> coefficients, std::type_identity_t<std::span<T const>> inverseSpanLengths, T u);
 	
-	// Same, for a curve and its curve table.
+	// Same, for a curve, its curve table and its 1 / h values.
 	template <std::floating_point T>
-	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, T u);
+	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, std::type_identity_t<std::span<T const>> inverseSpanLengths, T u);
 	
 	// C(u) from the curve table when the span of u is already known (from findSpan or a SpanLookup):
 	// t, Horner on A_span, C = Cw / w.
 	template <std::floating_point T>
 	GEOM_HD Point3<T> curvePointFromCurveTable(int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<Point4<T> const>> coefficients, std::type_identity_t<std::span<T const>> inverseSpanLengths, std::size_t span, T u);
 	
-	// Same as curvePointFromTable(curve, table, u), with the span from the curve's SpanLookup
-	// instead of the binary search.
+	// Same as curvePointFromTable(curve, table, inverseSpanLengths, u), with the span from the curve's
+	// SpanLookup instead of the binary search.
 	template <std::floating_point T>
-	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, SpanLookup<T> const& lookup, T u);
+	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, std::type_identity_t<std::span<T const>> inverseSpanLengths, SpanLookup<T> const& lookup, T u);
 	
-	// Fills a whole curve table into memory the caller owns, without allocating, from a basis table's two
-	// arrays and the curve's numSpans + p weighted points: coefficients holds numSpans rows of p + 1 points,
-	// inverseSpanLengths numSpans values (copied from the basis table). Writes every value. The CurveTable
-	// constructor is allocation plus this; call it directly to rebuild a table into reused memory.
+	// Fills a whole curve table into memory the caller owns, without allocating, from a basis table's
+	// coefficients and the curve's numSpans + p weighted points: coefficients holds numSpans rows of
+	// p + 1 points. Writes every value. The CurveTable constructor is allocation plus this; call it
+	// directly to rebuild a table into reused memory.
 	template <std::floating_point T>
-	void fillCurveTable(int degree, std::span<T const> basisCoefficients, std::span<T const> basisInverseSpanLengths, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients, std::span<T> inverseSpanLengths);
+	void fillCurveTable(int degree, std::span<T const> basisCoefficients, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients);
 	
 	namespace detail
 	{
@@ -109,10 +105,9 @@ namespace geom
 	CurveTable<T>::CurveTable(BasisTable<T> const& basis, std::span<Point4<T> const> weightedPoints)
 		: m_degree(basis.degree()),
 		m_numSpans(basis.numSpans()),
-		m_coefficients(basis.numSpans() * (static_cast<std::size_t>(basis.degree()) + 1)),
-		m_inverseSpanLengths(basis.numSpans())
+		m_coefficients(basis.numSpans() * (static_cast<std::size_t>(basis.degree()) + 1))
 	{
-		fillCurveTable<T>(m_degree, basis.coefficients(), basis.inverseSpanLengths(), weightedPoints, m_coefficients, m_inverseSpanLengths);
+		fillCurveTable<T>(m_degree, basis.coefficients(), weightedPoints, m_coefficients);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -150,14 +145,6 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	std::span<T const> CurveTable<T>::inverseSpanLengths() const noexcept
-	{
-		return m_inverseSpanLengths;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	template <std::floating_point T>
 	std::span<Point4<T> const> CurveTable<T>::spanCoefficients(std::size_t span) const
 	{
 		auto const p = static_cast<std::size_t>(m_degree);
@@ -179,9 +166,9 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, T u)
+	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, std::type_identity_t<std::span<T const>> inverseSpanLengths, T u)
 	{
-		return curvePointFromCurveTable<T>(curve.degree(), curve.knots(), table.coefficients(), table.inverseSpanLengths(), u);
+		return curvePointFromCurveTable<T>(curve.degree(), curve.knots(), table.coefficients(), inverseSpanLengths, u);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -205,22 +192,22 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, SpanLookup<T> const& lookup, T u)
+	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, CurveTable<T> const& table, std::type_identity_t<std::span<T const>> inverseSpanLengths, SpanLookup<T> const& lookup, T u)
 	{
 		std::size_t const span = lookup.find(curve.knots(), u);
-		return curvePointFromCurveTable<T>(curve.degree(), curve.knots(), table.coefficients(), table.inverseSpanLengths(), span, u);
+		return curvePointFromCurveTable<T>(curve.degree(), curve.knots(), table.coefficients(), inverseSpanLengths, span, u);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// numSpans comes from the basis table; a curve has n + 1 = numSpans + p control points.
+	// numSpans comes from the basis table's size; a curve has n + 1 = numSpans + p control points.
 	template <std::floating_point T>
-	void fillCurveTable(int degree, std::span<T const> basisCoefficients, std::span<T const> basisInverseSpanLengths, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients, std::span<T> inverseSpanLengths)
+	void fillCurveTable(int degree, std::span<T const> basisCoefficients, std::span<Point4<T> const> weightedPoints, std::span<Point4<T>> coefficients)
 	{
 		auto const p = static_cast<std::size_t>(degree);
-		std::size_t const numSpans = basisInverseSpanLengths.size();
+		std::size_t const numSpans = basisCoefficients.size() / ((p + 1) * (p + 1));
 		assert(basisCoefficients.size() == numSpans * (p + 1) * (p + 1) && weightedPoints.size() == numSpans + p);
-		assert(coefficients.size() == numSpans * (p + 1) && inverseSpanLengths.size() == numSpans);
+		assert(coefficients.size() == numSpans * (p + 1));
 		for (std::size_t row = 0; row < numSpans; ++row)
 		{
 			for (std::size_t d = 0; d <= p; ++d)
@@ -228,7 +215,6 @@ namespace geom
 				detail::buildCurveCoefficient<T>(row, d, degree, basisCoefficients, weightedPoints, coefficients);
 			}
 		}
-		std::copy(basisInverseSpanLengths.begin(), basisInverseSpanLengths.end(), inverseSpanLengths.begin());
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

@@ -7,16 +7,16 @@
 
 namespace gpu
 {
-	// A geom::BasisTable built on the GPU and kept there: same layout and values (see
+	// The coefficients of a geom::BasisTable built on the GPU and kept there: same layout and values (see
 	// src/geom/basis_table.hpp), but in device memory, so later kernels can read it without a copy.
-	// To look at it on the CPU, download the buffers: table.coefficients.download().
+	// To look at it on the CPU, download the buffer: table.coefficients.download().
+	// The 1 / h values are a separate buffer the caller owns (inverse_span_lengths_gpu.hpp).
 	template <std::floating_point T>
 	struct DeviceBasisTable
 	{
 		int degree{};
-		std::size_t numSpans{};                  // n + 1 - p rows, one per span j = p..n
-		DeviceBuffer<T> coefficients{};          // numSpans rows of (p + 1)^2 values
-		DeviceBuffer<T> inverseSpanLengths{};    // numSpans values 1 / h_j (0 for empty spans)
+		std::size_t numSpans{};            // n + 1 - p rows, one per span j = p..n
+		DeviceBuffer<T> coefficients{};    // numSpans rows of (p + 1)^2 values
 	};
 	
 	// The functions below are defined in basis_table_gpu.cu for float and double only.

@@ -22,13 +22,13 @@ namespace geom
 	// "Evaluation from the basis table" in docs/algorithms/basis-polynomials.md.
 	//
 	// Layout: one row per span j = p..n (row j - p), so findSpan gives the row directly.
-	//   coefficients():       rows of (p + 1)^2 values, each the table of basisPolynomials for span j
-	//                         (row r = N_{j-p+r,p}, column d = coefficient of t^d)
-	//   inverseSpanLengths(): 1 / (u_{j+1} - u_j), so t = (u - u_j) * inverseSpanLengths()[j - p]
+	//   coefficients(): rows of (p + 1)^2 values, each the table of basisPolynomials for span j
+	//                   (row r = N_{j-p+r,p}, column d = coefficient of t^d)
 	// Empty spans (repeated knots) keep zeros: findSpan never returns them.
 	//
-	// The table does not store the knots: evaluation also needs the curve's knots, so build and use
-	// it with the same curve. Host-side owner (std::vector); curvePointFromTable runs on raw spans.
+	// The table stores neither the knots nor 1 / h (inverse_span_lengths.hpp): evaluation also needs
+	// both, so build and use them with the same curve. Host-side owner (std::vector);
+	// curvePointFromTable runs on raw spans.
 	template <std::floating_point T>
 	class BasisTable
 	{
@@ -45,7 +45,6 @@ namespace geom
 		std::size_t numSpans() const noexcept;
 		
 		std::span<T const> coefficients() const noexcept;
-		std::span<T const> inverseSpanLengths() const noexcept;
 		
 		// The (p + 1)^2 coefficients of span j (p <= j <= n).
 		std::span<T const> spanCoefficients(std::size_t span) const;
@@ -54,7 +53,6 @@ namespace geom
 		int m_degree{};
 		std::size_t m_numSpans{};
 		std::vector<T> m_coefficients{};
-		std::vector<T> m_inverseSpanLengths{};
 	};
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -64,25 +62,25 @@ namespace geom
 	template <std::floating_point T>
 	GEOM_HD Point3<T> curvePointFromTable(int degree, std::type_identity_t<std::span<T const>> knots, std::type_identity_t<std::span<Point4<T> const>> weightedPoints, std::type_identity_t<std::span<T const>> coefficients, std::type_identity_t<std::span<T const>> inverseSpanLengths, T u);
 	
-	// Same, for a curve and its table.
+	// Same, for a curve, its table and its 1 / h values.
 	template <std::floating_point T>
-	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, BasisTable<T> const& table, T u);
+	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, BasisTable<T> const& table, std::type_identity_t<std::span<T const>> inverseSpanLengths, T u);
 	
 	// Fills a whole basis table into memory the caller owns, without allocating: coefficients holds
-	// numSpans rows of (p + 1)^2 values and inverseSpanLengths numSpans values, numSpans = knots.size() - 2p - 1
-	// (layout as in BasisTable). Writes every value, so the memory need not be zeroed. The BasisTable
-	// constructor is allocation plus this; call it directly to rebuild a table into reused memory.
+	// numSpans rows of (p + 1)^2 values, numSpans = knots.size() - 2p - 1 (layout as in BasisTable).
+	// Writes every value, so the memory need not be zeroed. The BasisTable constructor is allocation
+	// plus this; call it directly to rebuild a table into reused memory.
 	template <std::floating_point T>
-	void fillBasisTable(int degree, std::span<T const> knots, std::span<T> coefficients, std::span<T> inverseSpanLengths);
+	void fillBasisTable(int degree, std::span<T const> knots, std::span<T> coefficients);
 	
 	namespace detail
 	{
 		// Fills row `row` (span j = row + p) of a basis table: its (p + 1)^2 coefficients in
-		// coefficients and 1 / h_j in inverseSpanLengths (both the whole table), or zeros if the span is
-		// empty. Writes every value of the row, so the table need not start zeroed (cudaMalloc memory
-		// does not). Shared by BasisTable (one call per row) and the GPU kernel (one thread per row).
+		// coefficients (the whole table), or zeros if the span is empty. Writes every value of the row, so
+		// the table need not start zeroed (cudaMalloc memory does not). Shared by BasisTable (one call per
+		// row) and the GPU kernel (one thread per row).
 		template <std::floating_point T>
-		GEOM_HD void buildBasisRow(std::size_t row, int degree, std::span<T const> knots, std::span<T> coefficients, std::span<T> inverseSpanLengths);
+		GEOM_HD void buildBasisRow(std::size_t row, int degree, std::span<T const> knots, std::span<T> coefficients);
 	}  // namespace detail
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -96,10 +94,9 @@ namespace geom
 	BasisTable<T>::BasisTable(int degree, std::span<T const> knots)
 		: m_degree(degree),
 		m_numSpans(knots.size() - 2 * static_cast<std::size_t>(degree) - 1),
-		m_coefficients(m_numSpans * (static_cast<std::size_t>(degree) + 1) * (static_cast<std::size_t>(degree) + 1)),
-		m_inverseSpanLengths(m_numSpans)
+		m_coefficients(m_numSpans * (static_cast<std::size_t>(degree) + 1) * (static_cast<std::size_t>(degree) + 1))
 	{
-		fillBasisTable<T>(degree, knots, m_coefficients, m_inverseSpanLengths);
+		fillBasisTable<T>(degree, knots, m_coefficients);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -132,14 +129,6 @@ namespace geom
 	std::span<T const> BasisTable<T>::coefficients() const noexcept
 	{
 		return m_coefficients;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	template <std::floating_point T>
-	std::span<T const> BasisTable<T>::inverseSpanLengths() const noexcept
-	{
-		return m_inverseSpanLengths;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -178,30 +167,30 @@ namespace geom
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, BasisTable<T> const& table, T u)
+	Point3<T> curvePointFromTable(NurbsCurve<T> const& curve, BasisTable<T> const& table, std::type_identity_t<std::span<T const>> inverseSpanLengths, T u)
 	{
-		return curvePointFromTable<T>(curve.degree(), curve.knots(), curve.weightedControlPoints(), table.coefficients(), table.inverseSpanLengths(), u);
+		return curvePointFromTable<T>(curve.degree(), curve.knots(), curve.weightedControlPoints(), table.coefficients(), inverseSpanLengths, u);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	void fillBasisTable(int degree, std::span<T const> knots, std::span<T> coefficients, std::span<T> inverseSpanLengths)
+	void fillBasisTable(int degree, std::span<T const> knots, std::span<T> coefficients)
 	{
 		auto const p = static_cast<std::size_t>(degree);
 		std::size_t const numSpans = knots.size() - 2 * p - 1;
 		assert(degree >= 1 && degree <= kMaxDegree);
-		assert(coefficients.size() == numSpans * (p + 1) * (p + 1) && inverseSpanLengths.size() == numSpans);
+		assert(coefficients.size() == numSpans * (p + 1) * (p + 1));
 		for (std::size_t row = 0; row < numSpans; ++row)
 		{
-			detail::buildBasisRow<T>(row, degree, knots, coefficients, inverseSpanLengths);
+			detail::buildBasisRow<T>(row, degree, knots, coefficients);
 		}
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
 	template <std::floating_point T>
-	GEOM_HD void detail::buildBasisRow(std::size_t row, int degree, std::span<T const> knots, std::span<T> coefficients, std::span<T> inverseSpanLengths)
+	GEOM_HD void detail::buildBasisRow(std::size_t row, int degree, std::span<T const> knots, std::span<T> coefficients)
 	{
 		auto const p = static_cast<std::size_t>(degree);
 		std::size_t const size = (p + 1) * (p + 1);
@@ -213,10 +202,8 @@ namespace geom
 			{
 				c = T{0};
 			}
-			inverseSpanLengths[row] = T{0};
 			return;
 		}
-		inverseSpanLengths[row] = T{1} / (knots[span + 1] - knots[span]);
 		basisPolynomials<T>(span, degree, knots, rowCoefficients);
 	}
 }  // namespace geom
