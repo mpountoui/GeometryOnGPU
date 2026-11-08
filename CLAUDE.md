@@ -27,6 +27,7 @@ ctest --test-dir build --output-on-failure   # test: one executable per tests/te
                                              # registered with geom_add_test(<name>), CHECK from tests/check.hpp
 ./build/bench_curve_point [N] [degree] [--knots K] [--svg]   # benchmark (Release build; with CUDA also the GPU
                                                              # table builds); results in docs/benchmarks.md
+./build/bench_precompute [knots] [degree]                    # CUDA + OpenMP: whole precomputation, CPU threads vs GPU
 ```
 
 ## Architecture
@@ -169,6 +170,8 @@ Record each with its reason, for example: "Kernel X assumes sorted input because
   GPU tests compare with an ulp tolerance (`--fmad=false` makes them identical, useful to check that
   FMA is the only cause). `cudaMalloc` memory is not zeroed, so kernels write every output value, and
   GPU tests fill freed device memory with NaN first so a missed write fails (`tests/gpu_test_helpers.hpp`).
+- In a container `hardware_concurrency` ignores the CPU quota; threads above the quota are throttled for milliseconds.
+  So `bench_precompute` measures up to the usable threads (it reads the cgroup limit).
 - `.cu` files get `-Wall -Wextra` but not `-Wpedantic`: nvcc forwards it to the host compiler, which then
   warns about every line marker in nvcc's generated code.
 

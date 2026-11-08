@@ -155,6 +155,20 @@ if(GEOM_HAS_CUDA)
 	target_link_libraries(bench_curve_point PRIVATE gpu)
 endif()
 
+# CPU (OpenMP threads) against GPU for the whole precomputation. Only with CUDA, and only if the
+# compiler has OpenMP; it is linked into this benchmark alone.
+if(GEOM_HAS_CUDA)
+	find_package(OpenMP COMPONENTS CXX)
+	if(OpenMP_CXX_FOUND)
+		add_executable(bench_precompute benchmarks/bench_precompute.cpp)
+		target_compile_features(bench_precompute PRIVATE cxx_std_23)
+		target_link_libraries(bench_precompute PRIVATE geom gpu OpenMP::OpenMP_CXX)
+		geom_enable_warnings(bench_precompute)
+	else()
+		message(STATUS "OpenMP not found: bench_precompute is not built")
+	endif()
+endif()
+
 # ---- Tests -------------------------------------------------------------------------------
 # enable_testing() turns on CTest, CMake's test runner. add_test registers a program as a
 # test; it passes if the program exits with 0. Run all tests with:

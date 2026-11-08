@@ -435,3 +435,103 @@ Observations:
   The tables were re-measured then (median of three runs). Some build once rows of the earlier tables had
   also gone stale after the measuring order changed (basis table, 97 spans, incl. copies: 172 us in the
   earlier table, 35 us measured with the code just before the change).
+
+## Whole precomputation, CPU threads vs GPU (`bench_precompute`, since 2026-11-08)
+
+`bench_precompute [knots] [degree]` (only with CUDA and OpenMP) times everything a curve needs before its first query
+as one job: 1 / h, basis table, curve table and span lookup. Every row is a rebuild (all memory allocated before the clock
+starts), after one warm-up build, so neither OpenMP creating its threads nor CUDA loading the kernels is timed.
+
+- **CPU, 1 thread**: the library's sequential functions. **More threads**: OpenMP loops over the same per-item functions
+  as the kernels; the lookup splits the cells into one chunk per thread, each with one `findSpan` and then the CPU's sweep.
+  The program checks that the threaded tables equal the sequential ones.
+- The top thread count is the threads the process can really use, not `hardware_concurrency`: a container's CPU quota is
+  invisible to `hardware_concurrency`, and threads above it get throttled for milliseconds.
+- **GPU, computation only**: the four kernels, between CUDA events. **Incl. copies**: upload knots and points, the kernels,
+  download what queries on the CPU need (curve table, 1 / h, lookup; the basis table stays on the GPU).
+- **Control points changed**: only the curve table is rebuilt; 1 / h, the basis table and the lookup are kept.
+- **Where the GPU time goes**: an event between all stages of one run with copies, the fastest run by the host clock.
+
+### 2026-11-08, RTX 4000 Ada (sm_89) and AMD EPYC 7702 (container quota 13.6 CPUs, so 13 threads), g++-14 -O3, nvcc 12.8, p = 3, microseconds
+
+Each value is the median of three program runs.
+
+Precomputation (knots + control points -> 1 / h, basis table, curve table, span lookup):
+
+| spans | row | float [us] | vs 1 CPU thread | double [us] | vs 1 CPU thread |
+|---|---|---|---|---|---|
+| 97 | CPU, 1 thread | 7.7 | reference | 8.5 | reference |
+|  | CPU, 8 threads | 14.6 | 1.9x slower | 14.3 | 1.7x slower |
+|  | CPU, 13 threads | 18.1 | 2.4x slower | 17.8 | 2.1x slower |
+|  | GPU, computation only | 18.3 | 2.4x slower | 34.6 | 4.1x slower |
+|  | GPU, incl. copies CPU <-> GPU | 46.4 | 6.0x slower | 63.3 | 7.4x slower |
+| 9,997 | CPU, 1 thread | 796.4 | reference | 883.5 | reference |
+|  | CPU, 8 threads | 115.9 | 6.9x faster | 129.3 | 6.8x faster |
+|  | CPU, 13 threads | 82.1 | 9.7x faster | 89.8 | 9.8x faster |
+|  | GPU, computation only | 33.6 | 24x faster | 64.8 | 14x faster |
+|  | GPU, incl. copies CPU <-> GPU | 186.0 | 4.3x faster | 320.8 | 2.8x faster |
+| 99,997 | CPU, 1 thread | 8,052 | reference | 9,056 | reference |
+|  | CPU, 8 threads | 1,019 | 7.9x faster | 1,148 | 7.9x faster |
+|  | CPU, 13 threads | 642.3 | 13x faster | 716.7 | 13x faster |
+|  | GPU, computation only | 211.6 | 38x faster | 460.2 | 20x faster |
+|  | GPU, incl. copies CPU <-> GPU | 1,168 | 6.9x faster | 2,134 | 4.2x faster |
+| 999,997 | CPU, 1 thread | 81,554 | reference | 91,489 | reference |
+|  | CPU, 8 threads | 10,113 | 8.1x faster | 13,252 | 6.9x faster |
+|  | CPU, 13 threads | 6,308 | 13x faster | 9,152 | 10.0x faster |
+|  | GPU, computation only | 2,356 | 35x faster | 4,310 | 21x faster |
+|  | GPU, incl. copies CPU <-> GPU | 11,294 | 7.2x faster | 20,130 | 4.5x faster |
+
+Control points changed (control points -> curve table; 1 / h, basis table and lookup kept):
+
+| spans | row | float [us] | vs 1 CPU thread | double [us] | vs 1 CPU thread |
+|---|---|---|---|---|---|
+| 97 | CPU, 1 thread | 1.2 | reference | 1.5 | reference |
+|  | CPU, 8 threads | 3.2 | 2.7x slower | 3.2 | 2.1x slower |
+|  | CPU, 13 threads | 4.2 | 3.5x slower | 4.2 | 2.8x slower |
+|  | GPU, computation only | 4.7 | 3.9x slower | 5.0 | 3.3x slower |
+|  | GPU, incl. copies CPU <-> GPU | 13.2 | 11x slower | 13.3 | 8.9x slower |
+| 9,997 | CPU, 1 thread | 126.2 | reference | 149.8 | reference |
+|  | CPU, 8 threads | 18.5 | 6.8x faster | 22.4 | 6.7x faster |
+|  | CPU, 13 threads | 13.9 | 9.1x faster | 16.3 | 9.2x faster |
+|  | GPU, computation only | 4.3 | 29x faster | 9.5 | 16x faster |
+|  | GPU, incl. copies CPU <-> GPU | 118.1 | 1.1x faster | 217.6 | 1.5x slower |
+| 99,997 | CPU, 1 thread | 1,332 | reference | 1,657 | reference |
+|  | CPU, 8 threads | 161.5 | 8.2x faster | 195.6 | 8.5x faster |
+|  | CPU, 13 threads | 102.9 | 13x faster | 123.6 | 13x faster |
+|  | GPU, computation only | 10.5 | 127x faster | 53.9 | 31x faster |
+|  | GPU, incl. copies CPU <-> GPU | 740.9 | 1.8x faster | 1,400 | 1.2x faster |
+| 999,997 | CPU, 1 thread | 13,710 | reference | 16,800 | reference |
+|  | CPU, 8 threads | 1,653 | 8.3x faster | 3,458 | 4.9x faster |
+|  | CPU, 13 threads | 1,046 | 13x faster | 2,992 | 5.6x faster |
+|  | GPU, computation only | 446.9 | 31x faster | 911.4 | 18x faster |
+|  | GPU, incl. copies CPU <-> GPU | 7,916 | 1.7x faster | 14,700 | 1.1x faster |
+
+Where the GPU time goes (all tables, incl. copies, float; CUDA events; median of three runs, each the fastest of its runs):
+
+| stage | 97 spans [us] | 9,997 | 99,997 | 999,997 | share at 999,997 |
+|---|---|---|---|---|---|
+| upload knots | 8.1 | 11.2 | 55.0 | 382.0 | 3.4 % |
+| upload control points | 7.1 | 26.9 | 177.2 | 1,326 | 11.7 % |
+| 1 / h kernel | 6.0 | 4.1 | 8.2 | 24.7 | 0.2 % |
+| basis table kernel | 11.7 | 23.2 | 187.6 | 1,771 | 15.7 % |
+| curve table kernel | 3.3 | 3.6 | 9.9 | 442.8 | 3.9 % |
+| span lookup kernel | 4.2 | 5.4 | 13.2 | 145.7 | 1.3 % |
+| download curve table | 7.5 | 92.8 | 555.3 | 6,172 | 54.6 % |
+| download 1 / h | 9.0 | 14.1 | 61.6 | 367.3 | 3.2 % |
+| download span lookup | 8.8 | 18.7 | 114.6 | 673.2 | 6.0 % |
+| total (CUDA events) | 65.9 | 199.4 | 1,185 | 11,314 | 100.0 % |
+| total (host clock) | 68.0 | 201.2 | 1,187 | 11,316 | 100.0 % |
+
+The CUDA event total and the host clock agree within 3 us in the table above, so the events account for the whole run.
+
+Observations:
+
+- At 97 spans nothing beats one CPU thread: waking the threads or launching kernels costs more than the work (7.7 us).
+- CPU threads scale close to linearly from 10k spans in float (13 threads: 9.7-13x), so one CPU core is a poor baseline.
+- GPU, computation only, against 13 CPU threads (float): 2.4-3.0x faster for the whole job from 10k spans (double 1.4-2.1x).
+- **GPU with copies loses to 13 CPU threads** (float: 1.8-2.3x slower for the whole job, 7-9x slower when only the points
+  change). Copies are ~79% of the time at 1M spans, mostly the curve table's download (55%). The kernels are 21%, three quarters
+  of that the basis kernel. So the GPU pays off when the results stay on it, as for queries on the GPU, not when they all
+  go back to the CPU.
+- Control points changed, computation only: the GPU is 2.3-10x faster than 13 CPU threads in float from 10k spans.
+- These results depend on the 13-thread quota of this container: more threads would narrow or remove the GPU's lead.

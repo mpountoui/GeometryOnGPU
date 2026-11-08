@@ -14,6 +14,7 @@
 #include <system_error>
 #include <vector>
 
+#include "bench_common.hpp"
 #include "geom/basis_table.hpp"
 #include "geom/curve_table.hpp"
 #include "geom/inverse_span_lengths.hpp"
@@ -64,11 +65,17 @@
 
 namespace
 {
-	using Clock = std::chrono::steady_clock;
+	using bench::bestOf;
+	using bench::Clock;
+	using bench::formatMicroseconds;
+	using bench::kRuns;
+	using bench::kMinSeconds;
+	using bench::makeBenchmarkCurve;
+	using bench::parseNumber;
+	using bench::secondsSince;
+	using bench::withThousands;
 	
 	constexpr std::size_t kDefaultControlPoints = 100;
-	constexpr int kRuns = 5;
-	constexpr double kMinSeconds = 0.2;   // bestOf runs at least kRuns times and at least this long in total
 	
 	// Written by timeCpuBuildOnce so the compiler cannot drop the table builds it times.
 	double volatile checksumSink = 0.0;
@@ -105,44 +112,6 @@ namespace
 		bool writeSvg{false};
 		bool valid{true};
 	};
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// Uniform clamped knots: degree + 1 zeros, evenly spaced interior knots, degree + 1 ones.
-	template <std::floating_point T>
-	std::vector<T> uniformClampedKnots(int degree, std::size_t numPoints)
-	{
-		auto const p = static_cast<std::size_t>(degree);
-		std::size_t const numInterior = numPoints - p - 1;
-		std::vector<T> knots(p + 1, T{0});
-		for (std::size_t k = 1; k <= numInterior; ++k)
-		{
-			knots.push_back(static_cast<T>(k) / static_cast<T>(numInterior + 1));
-		}
-		knots.insert(knots.end(), p + 1, T{1});
-		return knots;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// A rational 3D spiral with numKnots uniform clamped knots: control points on a widening spiral
-	// in xy that rises in z (about six turns per 100 points), weights between 0.5 and 1.5.
-	// Precondition: numKnots >= 2 * (degree + 1).
-	template <std::floating_point T>
-	geom::NurbsCurve<T> makeBenchmarkCurve(int degree, std::size_t numKnots)
-	{
-		std::size_t const numControlPoints = numKnots - static_cast<std::size_t>(degree) - 1;
-		std::vector<geom::Point3<T>> points{};
-		std::vector<T> weights{};
-		for (std::size_t i = 0; i < numControlPoints; ++i)
-		{
-			double const t = static_cast<double>(i);
-			double const radius = 1.0 + 0.08 * t;
-			points.push_back({static_cast<T>(radius * std::cos(0.4 * t)), static_cast<T>(radius * std::sin(0.4 * t)), static_cast<T>(0.05 * t)});
-			weights.push_back(static_cast<T>(1.0 + 0.5 * std::sin(0.7 * t)));
-		}
-		return geom::NurbsCurve<T>(degree, uniformClampedKnots<T>(degree, numControlPoints), points, weights);
-	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
@@ -230,30 +199,6 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	double secondsSince(Clock::time_point start)
-	{
-		return std::chrono::duration<double>(Clock::now() - start).count();
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// The smallest result of measure(), which returns seconds, over at least kRuns runs and kMinSeconds in
-	// total. A fixed few runs are not enough for short measurements: best of 5 builds of ~0.5 ms came out
-	// 1.5-2.7x too slow and differed between runs (the CPU had probably not reached full speed yet).
-	template <typename Measure>
-	double bestOf(Measure const& measure)
-	{
-		Clock::time_point const start = Clock::now();
-		double best = measure();
-		for (int run = 1; run < kRuns || secondsSince(start) < kMinSeconds; ++run)
-		{
-			best = std::min(best, measure());
-		}
-		return best;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
 	// A build once of a table (BasisTable, CurveTable or SpanLookup) from the curve: its constructor,
 	// allocation included.
 	template <typename Table, std::floating_point T>
@@ -331,19 +276,6 @@ namespace
 		c.curveDifference = maxDistance<T>(out[0], out[2]);
 		c.lookupDifference = maxDistance<T>(out[0], out[3]);
 		return c;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// 1000000 -> "1,000,000".
-	std::string withThousands(std::size_t value)
-	{
-		std::string digits = std::to_string(value);
-		for (std::size_t i = digits.size(); i > 3; i -= 3)
-		{
-			digits.insert(i - 3, ",");
-		}
-		return digits;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -1112,26 +1044,10 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Microseconds: one decimal below 1000, else whole microseconds with thousands separators.
-	std::string formatMicroseconds(double seconds)
-	{
-		double const microseconds = seconds * 1e6;
-		if (microseconds < 1000.0)
-		{
-			return std::format("{:.1f}", microseconds);
-		}
-		return withThousands(static_cast<std::size_t>(std::llround(microseconds)));
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
 	// How the GPU compares with the CPU, in words: "14x faster" or "1.9x slower".
 	std::string gpuSpeedInWords(CpuGpu const& t)
 	{
-		bool const faster = t.gpuSeconds <= t.cpuSeconds;
-		double const ratio = faster ? t.cpuSeconds / t.gpuSeconds : t.gpuSeconds / t.cpuSeconds;
-		std::string const number = (ratio < 10.0) ? std::format("{:.1f}", ratio) : withThousands(static_cast<std::size_t>(std::llround(ratio)));
-		return number + (faster ? "x faster" : "x slower");
+		return bench::speedInWords(t.cpuSeconds, t.gpuSeconds);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -1276,20 +1192,6 @@ namespace
 		viz::addNurbsCurve(svg, makeBenchmarkCurve<double>(degree, numKnots), "#1f6feb", true);
 		svg.save(path);
 		std::println("wrote {}", path.string());
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// A positive integer, or 0 if the text is not one.
-	std::size_t parseNumber(std::string_view text)
-	{
-		std::size_t value = 0;
-		auto const [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
-		if (error != std::errc{} || end != text.data() + text.size())
-		{
-			return 0;
-		}
-		return value;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/

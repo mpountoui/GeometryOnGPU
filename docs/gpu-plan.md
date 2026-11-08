@@ -22,7 +22,7 @@ Update the status column when a step is done, and record agreed decisions below.
 | 2c | One 1 / h array per knot vector, owned by neither table (CPU and GPU), with its own kernel | Removing a copy by changing who owns the data | done 2026-11-08 |
 | 3 | Span lookup kernel, one thread per cell (each does its own `findSpan`, instead of the CPU's sequential sweep) | Sequential vs parallel algorithms | done 2026-11-08 |
 | 3b | GPU span lookup build in `bench_curve_point`, as in steps 1b and 2b; CPU `fillSpanLookup` for the rebuild rows | Comparing a parallel algorithm with a sequential one | done 2026-11-08 |
-| 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | |
+| 4 | Precompute benchmark: CPU (1 thread, multithreaded) vs GPU (kernel only, with copies, after warm-up) | CUDA events, where the time goes | done 2026-11-08 |
 | 5 | Basis table kernel with one block per span, levels in shared memory | `__shared__`, `__syncthreads()`, warps | |
 | 6 | Fuse kernels, several spans per block, float vs double, profiling | Occupancy, `nsys`/`ncu` | |
 
@@ -177,3 +177,18 @@ Findings (2026-11-08, RTX 4000 Ada; numbers in `docs/benchmarks.md`):
 
 - Computation only, rebuild, float: 4.9x faster than the CPU's sweep at 10k spans, 29x at 1M, despite a binary search
   per cell. 15x slower at 97 spans (launch).
+
+## Step 4: agreed decisions (implemented)
+
+- New executable `bench_precompute` (only with CUDA and OpenMP, which is linked into it alone); shared helpers moved to
+  `benchmarks/bench_common.hpp`. Whole precomputation and "control points changed" as rebuilds, 1 thread (the library's
+  sequential code), 8, and all usable threads, against the GPU with and without copies; a per-stage breakdown from CUDA events.
+- OpenMP rather than `std::thread`: it keeps its threads alive between runs, so small curves do not pay for creating them.
+- The threaded lookup gives each thread a chunk of cells, one `findSpan` and then the sweep, so the CPU keeps its best algorithm.
+
+Findings (2026-11-08, RTX 4000 Ada, numbers in `docs/benchmarks.md`):
+
+- Changed while measuring: "all threads" became all *usable* threads. This container reports 128 hardware threads but has a
+  CPU quota of 13.6; with 128 threads an empty OpenMP region averaged ~12 ms even with active waiting.
+- Against 13 CPU threads the GPU wins on computation alone (float: 2.4-3.0x from 10k spans) but loses with copies (1.8-2.3x).
+  At 1M spans copies are ~79% of the GPU's time. So the results should stay on the GPU: the next gain is queries there.
