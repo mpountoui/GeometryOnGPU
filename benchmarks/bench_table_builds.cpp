@@ -82,13 +82,11 @@ namespace
 	};
 	
 	// The curve table rows of one type (bestOf, except the first build), in the printed order. The curve
-	// kernel only does stage 2 (basis table -> curve table), so stage 2 has its own rows. The whole job
+	// kernel only does stage 2 (basis table -> curve table), so stage 2 has its own row. The whole job
 	// is what a query needs, so it also builds the 1 / h array.
 	struct CurveTableTimes
 	{
-		CpuGpu stage2RebuildCompute{};     // CPU fillCurveTable vs fillCurveTableOnDevice (the kernel alone, CUDA events)
 		CpuGpu stage2BuildOnceCompute{};   // CPU CurveTable(basis, points) vs buildCurveTableOnDevice until done
-		CpuGpu rebuildWithCopies{};        // CPU the three fills vs upload knots and points, three kernels, download
 		CpuGpu buildOnceWithCopies{};      // CPU CurveTable(curve) and 1 / h vs allocate and upload, three builds, download into new vectors
 		CpuGpu firstBuild{};               // the same, the type's first time (loads the curve and 1 / h kernels)
 		double difference{};               // largest |GPU - CPU| over all coefficient components
@@ -276,31 +274,6 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// Curve table stage 2, rebuild, CPU: fillCurveTable from a basis table built before, into existing memory.
-	template <std::floating_point T>
-	double timeCpuCurveStage2Rebuild(geom::NurbsCurve<T> const& curve, geom::BasisTable<T> const& basis, std::vector<geom::Point4<T>>& host)
-	{
-		Clock::time_point const start = Clock::now();
-		geom::fillCurveTable<T>(curve.degree(), basis.coefficients(), curve.weightedControlPoints(), host);
-		return secondsSince(start);
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// Curve table, whole job, rebuild, CPU: 1 / h and both tables into existing memory (the basis table
-	// into basisHost).
-	template <std::floating_point T>
-	double timeCpuCurveRebuild(geom::NurbsCurve<T> const& curve, std::vector<T>& basisHost, HostCurveResult<T>& host)
-	{
-		Clock::time_point const start = Clock::now();
-		geom::fillInverseSpanLengths<T>(curve.degree(), curve.knots(), host.inverseSpanLengths);
-		geom::fillBasisTable<T>(curve.degree(), curve.knots(), basisHost);
-		geom::fillCurveTable<T>(curve.degree(), basisHost, curve.weightedControlPoints(), host.coefficients);
-		return secondsSince(start);
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
 	// Curve table, whole job, build once, CPU: the CurveTable constructor from the curve and the 1 / h array.
 	template <std::floating_point T>
 	double timeCpuCurveBuildOnce(geom::NurbsCurve<T> const& curve)
@@ -311,24 +284,6 @@ namespace
 		double const seconds = secondsSince(start);
 		checksumSink = checksumSink + sinkValue(table) + static_cast<double>(inverseSpanLengths.back());
 		return seconds;
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
-	// Curve table, whole job, rebuild incl. copies, GPU: new knots and points into the existing device
-	// buffers, the three kernels into the existing device memory, download into existing host memory.
-	template <std::floating_point T>
-	double timeGpuCurveRebuildWithCopies(geom::NurbsCurve<T> const& curve, gpu::DeviceBuffer<T>& knots, gpu::DeviceBuffer<geom::Point4<T>>& points, gpu::DeviceBuffer<T>& inverseSpanLengths, gpu::DeviceBasisTable<T>& basis, gpu::DeviceCurveTable<T>& table, HostCurveResult<T>& host)
-	{
-		Clock::time_point const start = Clock::now();
-		knots.upload(curve.knots());
-		points.upload(curve.weightedControlPoints());
-		gpu::fillInverseSpanLengthsOnDevice<T>(curve.degree(), knots, inverseSpanLengths);
-		gpu::fillBasisTableOnDevice<T>(knots, basis);
-		gpu::fillCurveTableOnDevice<T>(basis, points, table);
-		table.coefficients.download(std::span<geom::Point4<T>>(host.coefficients));
-		inverseSpanLengths.download(std::span<T>(host.inverseSpanLengths));
-		return secondsSince(start);
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -374,20 +329,6 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// The kernel alone (fillCurveTableOnDevice into an allocated table), with events around the launch.
-	template <std::floating_point T>
-	double timeGpuCurveStage2RebuildCompute(gpu::DeviceBasisTable<T> const& basis, gpu::DeviceBuffer<geom::Point4<T>> const& weightedPoints, gpu::DeviceCurveTable<T>& table)
-	{
-		gpu::CudaEvent start{};
-		gpu::CudaEvent stop{};
-		start.record();
-		gpu::fillCurveTableOnDevice<T>(basis, weightedPoints, table);
-		stop.record();
-		return gpu::elapsedSeconds(start, stop);
-	}
-	
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-	
 	// The largest |a - b| over the four components x, y, z, w of all points.
 	template <std::floating_point T>
 	double maxComponentDifference(std::span<geom::Point4<T> const> a, std::span<geom::Point4<T> const> b)
@@ -416,39 +357,27 @@ namespace
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// All CPU rows. The rebuild rows write the curve table (sized like cpuTable), the 1 / h array and the
-	// intermediate basis table into memory allocated here, before timing.
+	// All CPU rows.
 	template <std::floating_point T>
-	void measureCurveCpu(geom::NurbsCurve<T> const& curve, geom::BasisTable<T> const& basis, geom::CurveTable<T> const& cpuTable, CurveTableTimes& t)
+	void measureCurveCpu(geom::NurbsCurve<T> const& curve, geom::BasisTable<T> const& basis, CurveTableTimes& t)
 	{
-		HostCurveResult<T> host{std::vector<geom::Point4<T>>(cpuTable.coefficients().size()), std::vector<T>(cpuTable.numSpans())};
-		std::vector<T> basisHost(basis.coefficients().size());
-		t.stage2RebuildCompute.cpuSeconds = bestOf([&] { return timeCpuCurveStage2Rebuild<T>(curve, basis, host.coefficients); });
 		t.stage2BuildOnceCompute.cpuSeconds = bestOf([&] { return timeCpuCurveStage2BuildOnce<T>(basis, curve.weightedControlPoints()); });
-		t.rebuildWithCopies.cpuSeconds = bestOf([&] { return timeCpuCurveRebuild<T>(curve, basisHost, host); });
 		t.buildOnceWithCopies.cpuSeconds = bestOf([&] { return timeCpuCurveBuildOnce<T>(curve); });
 		t.firstBuild.cpuSeconds = t.buildOnceWithCopies.cpuSeconds;
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 	
-	// The GPU rows that start from device memory allocated here: both stage 2 rows and the rebuild with copies.
-	// The basis table is built once and waited for, so that its kernel does not run into the first timed
-	// build. The rebuild downloads into host memory allocated here; its last result is compared with cpuTable.
+	// The stage 2 row, from a basis table and points already on the GPU. The basis table is built once and
+	// waited for, so that its kernel does not run into the first timed build.
 	template <std::floating_point T>
-	void measureCurveGpuFromDevice(geom::NurbsCurve<T> const& curve, geom::CurveTable<T> const& cpuTable, CurveTableTimes& t)
+	void measureCurveGpuFromDevice(geom::NurbsCurve<T> const& curve, CurveTableTimes& t)
 	{
-		HostCurveResult<T> host{std::vector<geom::Point4<T>>(cpuTable.coefficients().size()), std::vector<T>(cpuTable.numSpans())};
-		gpu::DeviceBuffer<T> deviceKnots{curve.knots()};
-		gpu::DeviceBuffer<T> deviceInverseSpanLengths(cpuTable.numSpans());
-		gpu::DeviceBuffer<geom::Point4<T>> devicePoints{curve.weightedControlPoints()};
-		gpu::DeviceBasisTable<T> basis = gpu::buildBasisTableOnDevice<T>(curve.degree(), deviceKnots);
+		gpu::DeviceBuffer<T> const deviceKnots{curve.knots()};
+		gpu::DeviceBuffer<geom::Point4<T>> const devicePoints{curve.weightedControlPoints()};
+		gpu::DeviceBasisTable<T> const basis = gpu::buildBasisTableOnDevice<T>(curve.degree(), deviceKnots);
 		gpu::checkCuda(cudaDeviceSynchronize());
 		t.stage2BuildOnceCompute.gpuSeconds = bestOf([&] { return timeGpuCurveStage2BuildOnceCompute<T>(basis, devicePoints); });
-		gpu::DeviceCurveTable<T> table = gpu::allocateCurveTableOnDevice<T>(curve.degree(), basis.numSpans);
-		t.stage2RebuildCompute.gpuSeconds = bestOf([&] { return timeGpuCurveStage2RebuildCompute<T>(basis, devicePoints, table); });
-		t.rebuildWithCopies.gpuSeconds = bestOf([&] { return timeGpuCurveRebuildWithCopies<T>(curve, deviceKnots, devicePoints, deviceInverseSpanLengths, basis, table, host); });
-		t.difference = std::max(t.difference, maxComponentDifference<T>(cpuTable.coefficients(), host.coefficients));
 	}
 	
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
@@ -463,8 +392,8 @@ namespace
 		geom::CurveTable<T> const cpuTable(cpuBasis, curve.weightedControlPoints());
 		CurveTableTimes t{};
 		measureCurveGpuBuildOnce<T>(curve, cpuTable, t);
-		measureCurveCpu<T>(curve, cpuBasis, cpuTable, t);
-		measureCurveGpuFromDevice<T>(curve, cpuTable, t);
+		measureCurveCpu<T>(curve, cpuBasis, t);
+		measureCurveGpuFromDevice<T>(curve, t);
 		return t;
 	}
 	
@@ -806,10 +735,8 @@ namespace
 	void printCurveSections(CurveTableTimes const& f, CurveTableTimes const& d)
 	{
 		printSectionHeader("CURVE TABLE, STAGE 2 ONLY  (basis table -> curve table; basis table already built)");
-		printComparison("Rebuild, computation only", f.stage2RebuildCompute, d.stage2RebuildCompute);
 		printComparison("Build once, computation only", f.stage2BuildOnceCompute, d.stage2BuildOnceCompute);
 		printSectionHeader("CURVE TABLE, WHOLE JOB  (curve: knots + control points -> curve table and 1 / h)");
-		printComparison("Rebuild, incl. copies CPU <-> GPU", f.rebuildWithCopies, d.rebuildWithCopies);
 		printComparison("Build once, incl. copies CPU <-> GPU", f.buildOnceWithCopies, d.buildOnceWithCopies);
 		printComparison("First build in this program", f.firstBuild, d.firstBuild);
 		printDifferences(f.difference, d.difference);

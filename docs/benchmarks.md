@@ -198,6 +198,10 @@ but a build once's temporaries are, as a one-off build pays for them before it r
 result is the downloaded host table). Every time is the best of at least 5 runs and 0.2 s (`bestOf`);
 first build is one run.
 
+The report no longer has two rows that the whole-precomputation sections below cover: the whole job's "Rebuild, incl. copies"
+(`PRECOMPUTATION`, with the span lookup included) and stage 2's "Rebuild, computation only" (`CONTROL POINTS CHANGED`, with
+the thread counts). The tables that follow show them as they were measured.
+
 ### 2026-11-08, RTX 4000 Ada (sm_89) and AMD EPYC 7702 (1 thread), g++-14 -O3, nvcc 12.8, p = 3, microseconds
 
 Each value is the median of three program runs. Kernel-only rows of a few microseconds differ by up to ~50% between
